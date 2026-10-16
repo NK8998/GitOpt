@@ -13,7 +13,17 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   JWT_SECRET: z.string().default('gitoptima-super-secret-development-jwt-key-2026'),
   JWT_EXPIRES_IN: z.string().default('24h'),
-  DATABASE_URL: z.string().optional(),
+
+  // DATABASE_URL takes precedence when present. Otherwise local development
+  // uses the standard PostgreSQL fields below. Port 5432 is the requested local default.
+  DATABASE_URL: optionalNonEmptyString,
+  PGHOST: z.string().default('127.0.0.1'),
+  PGPORT: z.coerce.number().int().positive().default(5432),
+  PGUSER: z.string().default('postgres'),
+  PGPASSWORD: z.string().default(''),
+  PGDATABASE: z.string().default('gitopt'),
+  PGPOOL_MAX: z.coerce.number().int().positive().default(10),
+
   GITHUB_TOKEN: optionalNonEmptyString,
 });
 
