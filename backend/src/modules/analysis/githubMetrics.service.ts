@@ -188,8 +188,15 @@ export class GitHubMetricsService {
     try {
       const { data, headers } = await this.requestJson<unknown[]>(`${endpoint}${separator}per_page=1`);
       const link = headers.get('link');
-      const lastPage = link?.match(/[?&]page=(\d+)>; rel="last"/i)?.[1];
-      if (lastPage) return Number(lastPage);
+      const lastLink = link
+        ?.split(',')
+        .map((part) => part.trim())
+        .find((part) => part.includes('rel="last"'));
+      const lastUrl = lastLink?.match(/<([^>]+)>/)?.[1];
+      if (lastUrl) {
+        const page = Number(new URL(lastUrl).searchParams.get('page'));
+        if (Number.isFinite(page) && page >= 0) return page;
+      }
       return Array.isArray(data) ? data.length : 0;
     } catch (error) {
       if (allowEmpty && error instanceof AppError && error.statusCode === 409) {

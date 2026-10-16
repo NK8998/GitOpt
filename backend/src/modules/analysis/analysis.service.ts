@@ -10,6 +10,7 @@ import {
   MetricDTO,
   MetricSource,
   ObjectDistribution,
+  RepositoryRecord,
 } from '../../types/metrics';
 import { AppError } from '../../middleware/errorHandler';
 import { recommendationService } from '../recommendation/recommendation.service';
@@ -43,7 +44,10 @@ export class AnalysisService {
       throw new AppError(`Repository with ID '${input.repository_id}' not found`, 404);
     }
 
-    const startTime = Date.now();
+    if (input.simulated_metrics && Object.keys(input.simulated_metrics).length > 0 && process.env.NODE_ENV !== 'test') {
+      throw new AppError('simulated_metrics is only supported in the test environment.', 400);
+    }
+
     const analysis = await db.createAnalysis({
       repository_id: input.repository_id,
       status: 'analyzing',
@@ -51,72 +55,16 @@ export class AnalysisService {
       progress_percent: 10,
     });
 
-    try {
-      await db.updateAnalysis(analysis.id, {
-        current_stage: 'metadata',
-        progress_percent: 25,
-      });
+    // Return the analysis immediately so the client can display and poll real progress.
+    // The Express process owns this lightweight background job for the current MVP.
+    void this.runAnalysis(analysis.id, repository, input).catch((error) => {
+      console.error(`Background analysis ${analysis.id} failed unexpectedly:`, error);
+    });
 
-      const collected = await this.collectMetrics(repository.url_path, repository.source, input);
-
-      await db.updateAnalysis(analysis.id, {
-        current_stage: 'metrics',
-        progress_percent: 60,
-      });
-
-      const savedMetrics = await this.persistMetrics(analysis.id, collected.metrics);
-      const optimizationScore = this.calculateOpportunityScore(collected.metrics);
-
-      await db.updateAnalysis(analysis.id, {
-        current_stage: 'recommendations',
-        progress_percent: 80,
-        metric_source: collected.metricSource,
-        metric_notes: collected.metricNotes,
-        default_branch: collected.defaultBranch,
-        tree_truncated: collected.treeTruncated,
-        object_distribution: collected.objectDistribution,
-        largest_objects: collected.largestObjects,
-        optimization_score: optimizationScore,
-      });
-
-      // Recommendations are deterministic and use only the measured/derived metric set.
-      await recommendationService.evaluate(analysis.id);
-
-      // Benchmarks are currently modelled estimates. The benchmark service keeps them
-      // separate from observed repository metrics and the UI labels them accordingly.
-      try {
-        await benchmarkService.generateBenchmarks(analysis.id);
-      } catch (err) {
-        console.warn('Benchmark generation warning:', err);
-      }
-
-      const durationMs = Date.now() - startTime;
-      const completedAnalysis = await db.updateAnalysis(analysis.id, {
-        status: 'completed',
-        current_stage: 'completed',
-        progress_percent: 100,
-        duration_ms: durationMs,
-      });
-
-      return {
-        ...completedAnalysis,
-        metrics: savedMetrics,
-        repository,
-      };
-    } catch (error) {
-      console.error('Git analysis error:', error);
-      await db.updateAnalysis(analysis.id, {
-        status: 'failed',
-        current_stage: 'failed',
-        duration_ms: Date.now() - startTime,
-      });
-
-      if (error instanceof AppError) throw error;
-      throw new AppError(
-        `Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        500
-      );
-    }
+    return {
+      ...analysis,
+      repository,
+    };
   }
 
   async getAnalysisById(id: string): Promise<AnalysisRecord> {
@@ -133,15 +81,75 @@ export class AnalysisService {
     return db.getAllAnalyses();
   }
 
+  private async runAnalysis(
+    analysisId: string,
+    repository: RepositoryRecord,
+    input: TriggerAnalysisInput
+  ): Promise<void> {
+    const startTime = Date.now();
+
+    try {
+      await db.updateAnalysis(analysisId, {
+        current_stage: 'metadata',
+        progress_percent: 25,
+        error_message: undefined,
+      });
+
+      const collected = await this.collectMetrics(repository.url_path, repository.source, input);
+
+      await db.updateAnalysis(analysisId, {
+        current_stage: 'metrics',
+        progress_percent: 60,
+      });
+
+      await this.persistMetrics(analysisId, collected.metrics);
+      const optimizationScore = this.calculateOpportunityScore(collected.metrics);
+
+      await db.updateAnalysis(analysisId, {
+        current_stage: 'recommendations',
+        progress_percent: 80,
+        metric_source: collected.metricSource,
+        metric_notes: collected.metricNotes,
+        default_branch: collected.defaultBranch,
+        tree_truncated: collected.treeTruncated,
+        object_distribution: collected.objectDistribution,
+        largest_objects: collected.largestObjects,
+        optimization_score: optimizationScore,
+      });
+
+      await recommendationService.evaluate(analysisId);
+
+      try {
+        await benchmarkService.generateBenchmarks(analysisId);
+      } catch (error) {
+        console.warn(`Benchmark estimate generation for ${analysisId} failed:`, error);
+      }
+
+      await db.updateAnalysis(analysisId, {
+        status: 'completed',
+        current_stage: 'completed',
+        progress_percent: 100,
+        duration_ms: Date.now() - startTime,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown analysis error';
+      console.error(`Git analysis ${analysisId} failed:`, error);
+      await db.updateAnalysis(analysisId, {
+        status: 'failed',
+        current_stage: 'failed',
+        progress_percent: 100,
+        duration_ms: Date.now() - startTime,
+        error_message: message,
+      });
+    }
+  }
+
   private async collectMetrics(
     urlOrPath: string,
     source: string,
     input: TriggerAnalysisInput
   ): Promise<CollectionResult> {
     if (input.simulated_metrics && Object.keys(input.simulated_metrics).length > 0) {
-      if (process.env.NODE_ENV !== 'test') {
-        throw new AppError('simulated_metrics is only supported in the test environment.', 400);
-      }
       return this.buildTestMetrics(input.simulated_metrics);
     }
 
@@ -212,7 +220,7 @@ export class AnalysisService {
           path: relativePath,
         });
       } catch {
-        // Skip files that are absent from the current checkout (for example sparse paths).
+        // Sparse checkouts may contain tracked paths not materialized on disk.
       }
     }
 
@@ -248,7 +256,7 @@ export class AnalysisService {
       metricNotes: [
         'Repository object size and object count are measured with git count-objects -v.',
         'File sizes and largest objects describe tracked files materialized in the current checkout.',
-        'Clone time remains an estimate; run the benchmark workflow for measured operation timing.',
+        'Clone time remains an estimate; isolated operation benchmarking is required for measured timing.',
       ],
       defaultBranch: branchResult.stdout.trim() || undefined,
       treeTruncated: false,

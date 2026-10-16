@@ -3,13 +3,18 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const optionalNonEmptyString = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.string().min(1).optional()
+);
+
 const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   JWT_SECRET: z.string().default('gitoptima-super-secret-development-jwt-key-2026'),
   JWT_EXPIRES_IN: z.string().default('24h'),
   DATABASE_URL: z.string().optional(),
-  GITHUB_TOKEN: z.string().min(1).optional(),
+  GITHUB_TOKEN: optionalNonEmptyString,
 });
 
 const parsed = envSchema.safeParse(process.env);
