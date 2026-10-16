@@ -1,6 +1,5 @@
-import { Pool } from 'pg';
-import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+import { Pool, QueryResultRow } from 'pg';
 import { env } from './env';
 import { WORKLOAD_PROFILES_SEED, INITIAL_RECOMMENDATIONS_SEED } from './constants';
 import {
@@ -37,131 +36,264 @@ export interface AnalysisRecommendationRecord {
   created_at?: string;
 }
 
-// In-Memory Relational Database State with Foreign Key Cascades & Constraints
-class RelationalDatabaseStore {
-  users: Map<string, UserRecord> = new Map();
-  workloadProfiles: Map<string, WorkloadProfileRecord> = new Map();
-  repositories: Map<string, RepositoryRecord> = new Map();
-  analyses: Map<string, AnalysisRecord> = new Map();
-  metrics: Map<string, MetricRecord> = new Map();
-  recommendations: Map<string, RecommendationRecord> = new Map();
-  templates: Map<string, TemplateRecord> = new Map();
-  benchmarks: Map<string, BenchmarkRecord> = new Map();
-  analysisRecommendations: Map<string, AnalysisRecommendationRecord> = new Map(); // key: `${analysis_id}:${recommendation_id}`
-
-
-  private isInitialized = false;
-
-  async init() {
-    if (this.isInitialized) return;
-
-    // Seed Workload Profiles
-    for (const wp of WORKLOAD_PROFILES_SEED) {
-      this.workloadProfiles.set(wp.id, {
-        id: wp.id,
-        slug: wp.slug,
-        name: wp.name,
-        description: wp.description,
-      });
+const poolConfig = env.DATABASE_URL
+  ? {
+      connectionString: env.DATABASE_URL,
+      ssl: env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
     }
+  : {
+      host: env.PGHOST,
+      port: env.PGPORT,
+      user: env.PGUSER,
+      password: env.PGPASSWORD || undefined,
+      database: env.PGDATABASE,
+      ssl: false,
+    };
 
-    // Seed Recommendations and Templates
-    for (const rec of INITIAL_RECOMMENDATIONS_SEED) {
-      this.recommendations.set(rec.id, {
-        id: rec.id,
-        title: rec.title,
-        category: rec.category,
-        severity: rec.severity,
-        description: rec.description,
-      });
+export const pgPool = new Pool({
+  ...poolConfig,
+  max: env.PGPOOL_MAX,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 5_000,
+});
 
-      this.templates.set(rec.template.id, {
-        id: rec.template.id,
-        recommendation_id: rec.id,
-        title: rec.template.title,
-        content: rec.template.content,
-        format: rec.template.format,
-      });
-    }
+function iso(value: unknown): string {
+  if (value instanceof Date) return value.toISOString();
+  return new Date(String(value)).toISOString();
+}
 
-    // Seed default developer user
-    const defaultUserId = '00000000-0000-4000-8000-000000000001';
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash('Password123!', salt);
-    this.users.set(defaultUserId, {
-      id: defaultUserId,
-      name: 'Senior Dev Engineer',
-      email: 'developer@gitoptima.io',
-      password_hash: passwordHash,
-      role: 'developer',
-      created_at: new Date().toISOString(),
-    });
+function number(value: unknown): number {
+  return value === null || value === undefined ? 0 : Number(value);
+}
 
-    // Seed a sample repository for local_dev and ci_cd
-    const sampleRepoId = '99999999-9999-4999-8999-999999999999';
-    const ciCdWorkloadId = '22222222-2222-4222-8222-222222222222';
-    this.repositories.set(sampleRepoId, {
-      id: sampleRepoId,
-      user_id: defaultUserId,
-      workload_id: ciCdWorkloadId,
-      name: 'microservices-checkout-service',
-      source: 'github',
-      url_path: 'https://github.com/gitoptima/checkout-service.git',
-      created_at: new Date().toISOString(),
-    });
+function mapWorkload(row: QueryResultRow): WorkloadProfileRecord {
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    description: row.description,
+  };
+}
 
-    this.isInitialized = true;
-    console.log('✓ GitOptima Database initialized & seeded successfully.');
+function mapRepository(row: QueryResultRow): RepositoryRecord {
+  const repository: RepositoryRecord = {
+    id: row.id,
+    user_id: row.user_id,
+    workload_id: row.workload_id,
+    name: row.name,
+    source: row.source,
+    url_path: row.url_path,
+    created_at: iso(row.created_at),
+  };
+
+  if (row.workload_slug) {
+    repository.workload = {
+      id: row.workload_id,
+      slug: row.workload_slug,
+      name: row.workload_name,
+      description: row.workload_description,
+    };
   }
 
-  // --- Users Operations ---
-  async createUser(data: Omit<UserRecord, 'id' | 'created_at'>): Promise<UserRecord> {
-    // Unique email constraint
-    for (const user of this.users.values()) {
-      if (user.email.toLowerCase() === data.email.toLowerCase()) {
-        throw new Error('User with this email already exists');
+  return repository;
+}
+
+function mapAnalysis(row: QueryResultRow): AnalysisRecord {
+  return {
+    id: row.id,
+    repository_id: row.repository_id,
+    status: row.status,
+    duration_ms: row.duration_ms === null ? null : number(row.duration_ms),
+    optimization_score:
+      row.optimization_score === null || row.optimization_score === undefined
+        ? undefined
+        : number(row.optimization_score),
+    current_stage: row.current_stage || undefined,
+    progress_percent:
+      row.progress_percent === null || row.progress_percent === undefined
+        ? undefined
+        : number(row.progress_percent),
+    object_distribution: row.object_distribution || undefined,
+    largest_objects: row.largest_objects || undefined,
+    metric_source: row.metric_source || undefined,
+    metric_notes: row.metric_notes || undefined,
+    default_branch: row.default_branch || undefined,
+    tree_truncated: Boolean(row.tree_truncated),
+    error_message: row.error_message || undefined,
+    created_at: iso(row.created_at),
+  };
+}
+
+function mapMetric(row: QueryResultRow): MetricRecord {
+  return {
+    id: row.id,
+    analysis_id: row.analysis_id,
+    metric_type: row.metric_type,
+    metric_value: number(row.metric_value),
+    unit: row.unit,
+  };
+}
+
+function mapTemplate(row: QueryResultRow): TemplateRecord {
+  return {
+    id: row.id,
+    recommendation_id: row.recommendation_id,
+    title: row.title,
+    content: row.content,
+    format: row.format,
+  };
+}
+
+function mapRecommendation(row: QueryResultRow): RecommendationRecord {
+  return {
+    id: row.id,
+    title: row.title,
+    category: row.category,
+    severity: row.severity,
+    description: row.description,
+    why_recommended: row.why_recommended || undefined,
+    advantages: row.advantages || undefined,
+    tradeoffs: row.tradeoffs || undefined,
+    git_mechanism: row.git_mechanism || undefined,
+    impact_estimate: row.impact_estimate || undefined,
+  };
+}
+
+function mapBenchmark(row: QueryResultRow): BenchmarkRecord {
+  return {
+    id: row.id,
+    analysis_id: row.analysis_id,
+    strategy: row.strategy,
+    clone_time_sec: number(row.clone_time_sec),
+    data_transferred_mb: number(row.data_transferred_mb),
+    disk_usage_mb: number(row.disk_usage_mb),
+    relative_percent: number(row.relative_percent),
+    is_best: Boolean(row.is_best),
+    created_at: iso(row.created_at),
+  };
+}
+
+class PostgresDatabaseStore {
+  private initialized = false;
+
+  async init(): Promise<void> {
+    if (this.initialized) return;
+
+    await pgPool.query('SELECT 1');
+    await this.seedReferenceData();
+    this.initialized = true;
+    console.log(`✓ GitOpt PostgreSQL connected at ${env.PGHOST}:${env.PGPORT}/${env.PGDATABASE}`);
+  }
+
+  private async seedReferenceData(): Promise<void> {
+    for (const wp of WORKLOAD_PROFILES_SEED) {
+      await pgPool.query(
+        `INSERT INTO workload_profiles(id, slug, name, description)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (slug) DO UPDATE SET
+           name = EXCLUDED.name,
+           description = EXCLUDED.description`,
+        [wp.id, wp.slug, wp.name, wp.description]
+      );
+    }
+
+    for (const rec of INITIAL_RECOMMENDATIONS_SEED) {
+      const existing = await pgPool.query(
+        'SELECT id FROM recommendations WHERE title = $1 ORDER BY id LIMIT 1',
+        [rec.title]
+      );
+      const recommendationId = existing.rows[0]?.id || rec.id;
+
+      if (existing.rowCount) {
+        await pgPool.query(
+          `UPDATE recommendations
+           SET category = $2, severity = $3, description = $4
+           WHERE id = $1`,
+          [recommendationId, rec.category, rec.severity, rec.description]
+        );
+      } else {
+        await pgPool.query(
+          `INSERT INTO recommendations(id, title, category, severity, description)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [recommendationId, rec.title, rec.category, rec.severity, rec.description]
+        );
+      }
+
+      const template = await pgPool.query(
+        `SELECT id FROM templates
+         WHERE recommendation_id = $1 AND title = $2
+         LIMIT 1`,
+        [recommendationId, rec.template.title]
+      );
+      if (template.rowCount) {
+        await pgPool.query(
+          `UPDATE templates SET content = $3, format = $4
+           WHERE recommendation_id = $1 AND title = $2`,
+          [recommendationId, rec.template.title, rec.template.content, rec.template.format]
+        );
+      } else {
+        await pgPool.query(
+          `INSERT INTO templates(id, recommendation_id, title, content, format)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [rec.template.id, recommendationId, rec.template.title, rec.template.content, rec.template.format]
+        );
       }
     }
-    const id = crypto.randomUUID();
-    const record: UserRecord = {
-      id,
-      ...data,
-      created_at: new Date().toISOString(),
-    };
-    this.users.set(id, record);
-    return record;
+
+    const defaultUserId = '00000000-0000-4000-8000-000000000001';
+    const defaultEmail = 'developer@gitoptima.io';
+    const existingUser = await this.findUserById(defaultUserId);
+    if (!existingUser) {
+      const passwordHash = await bcrypt.hash('Password123!', 10);
+      await pgPool.query(
+        `INSERT INTO users(id, name, email, password_hash, role)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (email) DO NOTHING`,
+        [defaultUserId, 'Senior Dev Engineer', defaultEmail, passwordHash, 'developer']
+      );
+    }
+  }
+
+  async createUser(data: Omit<UserRecord, 'id' | 'created_at'>): Promise<UserRecord> {
+    const result = await pgPool.query(
+      `INSERT INTO users(name, email, password_hash, role)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [data.name, data.email, data.password_hash, data.role]
+    );
+    return { ...result.rows[0], created_at: iso(result.rows[0].created_at) };
   }
 
   async findUserByEmail(email: string): Promise<UserRecord | null> {
-    for (const user of this.users.values()) {
-      if (user.email.toLowerCase() === email.toLowerCase()) {
-        return user;
-      }
-    }
-    return null;
+    const result = await pgPool.query(
+      'SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
+      [email]
+    );
+    if (!result.rowCount) return null;
+    return { ...result.rows[0], created_at: iso(result.rows[0].created_at) };
   }
 
   async findUserById(id: string): Promise<UserRecord | null> {
-    return this.users.get(id) || null;
+    const result = await pgPool.query('SELECT * FROM users WHERE id = $1 LIMIT 1', [id]);
+    if (!result.rowCount) return null;
+    return { ...result.rows[0], created_at: iso(result.rows[0].created_at) };
   }
 
-  // --- Workload Profiles ---
   async getAllWorkloads(): Promise<WorkloadProfileRecord[]> {
-    return Array.from(this.workloadProfiles.values());
+    const result = await pgPool.query('SELECT * FROM workload_profiles ORDER BY name');
+    return result.rows.map(mapWorkload);
   }
 
   async findWorkloadById(id: string): Promise<WorkloadProfileRecord | null> {
-    return this.workloadProfiles.get(id) || null;
+    const result = await pgPool.query('SELECT * FROM workload_profiles WHERE id = $1 LIMIT 1', [id]);
+    return result.rowCount ? mapWorkload(result.rows[0]) : null;
   }
 
   async findWorkloadBySlug(slug: string): Promise<WorkloadProfileRecord | null> {
-    for (const wp of this.workloadProfiles.values()) {
-      if (wp.slug === slug) return wp;
-    }
-    return null;
+    const result = await pgPool.query('SELECT * FROM workload_profiles WHERE slug = $1 LIMIT 1', [slug]);
+    return result.rowCount ? mapWorkload(result.rows[0]) : null;
   }
 
-  // --- Repositories Operations ---
   async createRepository(data: {
     user_id: string;
     workload_id: string;
@@ -169,59 +301,57 @@ class RelationalDatabaseStore {
     source: 'github' | 'gitlab' | 'local';
     url_path: string;
   }): Promise<RepositoryRecord> {
-    // Foreign key validations
-    if (!this.users.has(data.user_id)) {
-      throw new Error(`Foreign key violation: user_id '${data.user_id}' not found`);
-    }
-    if (!this.workloadProfiles.has(data.workload_id)) {
-      throw new Error(`Foreign key violation: workload_id '${data.workload_id}' not found`);
-    }
-
-    const id = crypto.randomUUID();
-    const record: RepositoryRecord = {
-      id,
-      ...data,
-      created_at: new Date().toISOString(),
-    };
-    this.repositories.set(id, record);
-    return record;
+    const result = await pgPool.query(
+      `INSERT INTO repositories(user_id, workload_id, name, source, url_path)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [data.user_id, data.workload_id, data.name, data.source, data.url_path]
+    );
+    return mapRepository(result.rows[0]);
   }
 
   async getRepositoriesByUserId(userId: string): Promise<RepositoryRecord[]> {
-    const list: RepositoryRecord[] = [];
-    for (const repo of this.repositories.values()) {
-      if (repo.user_id === userId) {
-        const wp = this.workloadProfiles.get(repo.workload_id);
-        list.push({ ...repo, workload: wp });
-      }
-    }
-    return list.sort((a, b) => (b.created_at > a.created_at ? 1 : -1));
+    const result = await pgPool.query(
+      `SELECT r.*, w.slug AS workload_slug, w.name AS workload_name,
+              w.description AS workload_description
+       FROM repositories r
+       JOIN workload_profiles w ON w.id = r.workload_id
+       WHERE r.user_id = $1
+       ORDER BY r.created_at DESC`,
+      [userId]
+    );
+    return result.rows.map(mapRepository);
+  }
+
+  async getAllRepositories(): Promise<RepositoryRecord[]> {
+    const result = await pgPool.query(
+      `SELECT r.*, w.slug AS workload_slug, w.name AS workload_name,
+              w.description AS workload_description
+       FROM repositories r
+       JOIN workload_profiles w ON w.id = r.workload_id
+       ORDER BY r.created_at DESC`
+    );
+    return result.rows.map(mapRepository);
   }
 
   async getRepositoryById(id: string): Promise<RepositoryRecord | null> {
-    const repo = this.repositories.get(id);
-    if (!repo) return null;
-    const wp = this.workloadProfiles.get(repo.workload_id);
-    return { ...repo, workload: wp };
+    const result = await pgPool.query(
+      `SELECT r.*, w.slug AS workload_slug, w.name AS workload_name,
+              w.description AS workload_description
+       FROM repositories r
+       JOIN workload_profiles w ON w.id = r.workload_id
+       WHERE r.id = $1
+       LIMIT 1`,
+      [id]
+    );
+    return result.rowCount ? mapRepository(result.rows[0]) : null;
   }
 
   async deleteRepository(id: string): Promise<boolean> {
-    if (!this.repositories.has(id)) return false;
-    // CASCADE: Delete associated analyses
-    const associatedAnalyses: string[] = [];
-    for (const [analysisId, analysis] of this.analyses.entries()) {
-      if (analysis.repository_id === id) {
-        associatedAnalyses.push(analysisId);
-      }
-    }
-    for (const aId of associatedAnalyses) {
-      await this.deleteAnalysis(aId);
-    }
-    this.repositories.delete(id);
-    return true;
+    const result = await pgPool.query('DELETE FROM repositories WHERE id = $1', [id]);
+    return Boolean(result.rowCount);
   }
 
-  // --- Analyses Operations ---
   async createAnalysis(data: {
     repository_id: string;
     status: AnalysisRecord['status'];
@@ -231,165 +361,163 @@ class RelationalDatabaseStore {
     progress_percent?: number;
     object_distribution?: AnalysisRecord['object_distribution'];
     largest_objects?: AnalysisRecord['largest_objects'];
+    metric_source?: AnalysisRecord['metric_source'];
+    metric_notes?: string[];
+    default_branch?: string;
+    tree_truncated?: boolean;
+    error_message?: string;
   }): Promise<AnalysisRecord> {
-    if (!this.repositories.has(data.repository_id)) {
-      throw new Error(`Foreign key violation: repository_id '${data.repository_id}' not found`);
-    }
-
-    const id = crypto.randomUUID();
-    const record: AnalysisRecord = {
-      id,
-      repository_id: data.repository_id,
-      status: data.status,
-      duration_ms: data.duration_ms ?? null,
-      optimization_score: data.optimization_score ?? 72,
-      current_stage: data.current_stage ?? 'discovery',
-      progress_percent: data.progress_percent ?? 0,
-      object_distribution: data.object_distribution,
-      largest_objects: data.largest_objects,
-      created_at: new Date().toISOString(),
-    };
-    this.analyses.set(id, record);
-    return record;
+    const result = await pgPool.query(
+      `INSERT INTO analyses(
+         repository_id, status, duration_ms, optimization_score, current_stage,
+         progress_percent, object_distribution, largest_objects, metric_source,
+         metric_notes, default_branch, tree_truncated, error_message
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       RETURNING *`,
+      [
+        data.repository_id,
+        data.status,
+        data.duration_ms ?? null,
+        data.optimization_score ?? null,
+        data.current_stage ?? 'discovery',
+        data.progress_percent ?? 0,
+        data.object_distribution ? JSON.stringify(data.object_distribution) : null,
+        data.largest_objects ? JSON.stringify(data.largest_objects) : null,
+        data.metric_source ?? null,
+        data.metric_notes ?? null,
+        data.default_branch ?? null,
+        data.tree_truncated ?? false,
+        data.error_message ?? null,
+      ]
+    );
+    return mapAnalysis(result.rows[0]);
   }
 
-  async updateAnalysis(
-    id: string,
-    updates: Partial<AnalysisRecord>
-  ): Promise<AnalysisRecord> {
-    const existing = this.analyses.get(id);
-    if (!existing) {
-      throw new Error(`Analysis with id '${id}' not found`);
+  async updateAnalysis(id: string, updates: Partial<AnalysisRecord>): Promise<AnalysisRecord> {
+    const allowed: Array<keyof AnalysisRecord> = [
+      'status',
+      'duration_ms',
+      'optimization_score',
+      'current_stage',
+      'progress_percent',
+      'object_distribution',
+      'largest_objects',
+      'metric_source',
+      'metric_notes',
+      'default_branch',
+      'tree_truncated',
+      'error_message',
+    ];
+
+    const assignments: string[] = [];
+    const values: unknown[] = [];
+    for (const key of allowed) {
+      if (!(key in updates)) continue;
+      let value = updates[key];
+      if ((key === 'object_distribution' || key === 'largest_objects') && value !== undefined) {
+        value = value === null ? null : JSON.stringify(value);
+      }
+      values.push(value === undefined ? null : value);
+      assignments.push(`${key} = $${values.length}`);
     }
-    const updated: AnalysisRecord = {
-      ...existing,
-      ...updates,
-    };
-    this.analyses.set(id, updated);
-    return updated;
+
+    if (!assignments.length) {
+      const current = await this.getAnalysisById(id);
+      if (!current) throw new Error(`Analysis with id '${id}' not found`);
+      return current;
+    }
+
+    values.push(id);
+    const result = await pgPool.query(
+      `UPDATE analyses SET ${assignments.join(', ')} WHERE id = $${values.length} RETURNING *`,
+      values
+    );
+    if (!result.rowCount) throw new Error(`Analysis with id '${id}' not found`);
+    return mapAnalysis(result.rows[0]);
   }
 
   async getAnalysisById(id: string): Promise<AnalysisRecord | null> {
-    const analysis = this.analyses.get(id);
-    if (!analysis) return null;
+    const analysisResult = await pgPool.query('SELECT * FROM analyses WHERE id = $1 LIMIT 1', [id]);
+    if (!analysisResult.rowCount) return null;
 
-    const metricsList: MetricDTO[] = [];
-    for (const m of this.metrics.values()) {
-      if (m.analysis_id === id) {
-        metricsList.push(m);
-      }
-    }
-
-    const repo = await this.getRepositoryById(analysis.repository_id);
+    const analysis = mapAnalysis(analysisResult.rows[0]);
+    const [metrics, repository] = await Promise.all([
+      this.getMetricsByAnalysisId(id),
+      this.getRepositoryById(analysis.repository_id),
+    ]);
 
     return {
       ...analysis,
-      metrics: metricsList,
-      repository: repo || undefined,
+      metrics,
+      repository: repository || undefined,
     };
   }
 
   async getAllAnalyses(): Promise<AnalysisRecord[]> {
-    const list: AnalysisRecord[] = [];
-    for (const a of this.analyses.values()) {
-      const full = await this.getAnalysisById(a.id);
-      if (full) list.push(full);
-    }
-    return list.sort((a, b) => (b.created_at > a.created_at ? 1 : -1));
+    const result = await pgPool.query('SELECT id FROM analyses ORDER BY created_at DESC');
+    const analyses = await Promise.all(result.rows.map((row) => this.getAnalysisById(row.id)));
+    return analyses.filter((item): item is AnalysisRecord => Boolean(item));
   }
 
   async getAnalysesByRepositoryId(repoId: string): Promise<AnalysisRecord[]> {
-    const list: AnalysisRecord[] = [];
-    for (const a of this.analyses.values()) {
-      if (a.repository_id === repoId) {
-        const full = await this.getAnalysisById(a.id);
-        if (full) list.push(full);
-      }
-    }
-    return list.sort((a, b) => (b.created_at > a.created_at ? 1 : -1));
+    const result = await pgPool.query(
+      'SELECT id FROM analyses WHERE repository_id = $1 ORDER BY created_at DESC',
+      [repoId]
+    );
+    const analyses = await Promise.all(result.rows.map((row) => this.getAnalysisById(row.id)));
+    return analyses.filter((item): item is AnalysisRecord => Boolean(item));
   }
 
   async deleteAnalysis(id: string): Promise<boolean> {
-    if (!this.analyses.has(id)) return false;
-    // CASCADE metrics
-    for (const [mId, m] of this.metrics.entries()) {
-      if (m.analysis_id === id) {
-        this.metrics.delete(mId);
-      }
-    }
-    // CASCADE analysis_recommendations
-    for (const [key, ar] of this.analysisRecommendations.entries()) {
-      if (ar.analysis_id === id) {
-        this.analysisRecommendations.delete(key);
-      }
-    }
-    // CASCADE benchmarks
-    for (const [bId, b] of this.benchmarks.entries()) {
-      if (b.analysis_id === id) {
-        this.benchmarks.delete(bId);
-      }
-    }
-    this.analyses.delete(id);
-    return true;
+    const result = await pgPool.query('DELETE FROM analyses WHERE id = $1', [id]);
+    return Boolean(result.rowCount);
   }
 
-  // --- Metrics Operations ---
   async createMetric(data: {
     analysis_id: string;
     metric_type: string;
     metric_value: number;
     unit: string;
   }): Promise<MetricRecord> {
-    if (!this.analyses.has(data.analysis_id)) {
-      throw new Error(`Foreign key violation: analysis_id '${data.analysis_id}' not found`);
-    }
-    const id = crypto.randomUUID();
-    const record: MetricRecord = {
-      id,
-      ...data,
-    };
-    this.metrics.set(id, record);
-    return record;
+    const result = await pgPool.query(
+      `INSERT INTO metrics(analysis_id, metric_type, metric_value, unit)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [data.analysis_id, data.metric_type, data.metric_value, data.unit]
+    );
+    return mapMetric(result.rows[0]);
   }
 
   async getMetricsByAnalysisId(analysisId: string): Promise<MetricRecord[]> {
-    const results: MetricRecord[] = [];
-    for (const m of this.metrics.values()) {
-      if (m.analysis_id === analysisId) {
-        results.push(m);
-      }
-    }
-    return results;
+    const result = await pgPool.query(
+      'SELECT * FROM metrics WHERE analysis_id = $1 ORDER BY metric_type',
+      [analysisId]
+    );
+    return result.rows.map(mapMetric);
   }
 
-  // --- Recommendations & Templates ---
   async getAllRecommendations(): Promise<RecommendationRecord[]> {
-    const list: RecommendationRecord[] = [];
-    for (const rec of this.recommendations.values()) {
-      const recTemplates: TemplateRecord[] = [];
-      for (const t of this.templates.values()) {
-        if (t.recommendation_id === rec.id) {
-          recTemplates.push(t);
-        }
-      }
-      list.push({ ...rec, templates: recTemplates });
-    }
-    return list;
+    const result = await pgPool.query('SELECT * FROM recommendations ORDER BY title');
+    return Promise.all(
+      result.rows.map(async (row) => ({
+        ...mapRecommendation(row),
+        templates: await this.getTemplatesByRecommendationId(row.id),
+      }))
+    );
   }
 
   async findRecommendationByTitle(title: string): Promise<RecommendationRecord | null> {
-    for (const rec of this.recommendations.values()) {
-      if (rec.title.toLowerCase().includes(title.toLowerCase()) || title.toLowerCase().includes(rec.title.toLowerCase())) {
-        const recTemplates: TemplateRecord[] = [];
-        for (const t of this.templates.values()) {
-          if (t.recommendation_id === rec.id) {
-            recTemplates.push(t);
-          }
-        }
-        return { ...rec, templates: recTemplates };
-      }
-    }
-    return null;
+    const result = await pgPool.query(
+      `SELECT * FROM recommendations
+       WHERE LOWER(title) = LOWER($1)
+       ORDER BY id
+       LIMIT 1`,
+      [title]
+    );
+    if (!result.rowCount) return null;
+    const recommendation = mapRecommendation(result.rows[0]);
+    recommendation.templates = await this.getTemplatesByRecommendationId(recommendation.id);
+    return recommendation;
   }
 
   async upsertRecommendation(data: {
@@ -408,88 +536,118 @@ class RelationalDatabaseStore {
       format: 'shell' | 'gitconfig';
     }>;
   }): Promise<RecommendationRecord> {
-    let rec = await this.findRecommendationByTitle(data.title);
-    if (!rec) {
-      const id = crypto.randomUUID();
-      rec = {
-        id,
-        title: data.title,
-        category: data.category,
-        severity: data.severity,
-        description: data.description,
-        why_recommended: data.why_recommended,
-        advantages: data.advantages,
-        tradeoffs: data.tradeoffs,
-        git_mechanism: data.git_mechanism,
-        impact_estimate: data.impact_estimate,
-        templates: [],
-      };
-      this.recommendations.set(id, rec);
-    } else {
-      rec.why_recommended = data.why_recommended || rec.why_recommended;
-      rec.advantages = data.advantages || rec.advantages;
-      rec.tradeoffs = data.tradeoffs || rec.tradeoffs;
-      rec.git_mechanism = data.git_mechanism || rec.git_mechanism;
-      rec.impact_estimate = data.impact_estimate || rec.impact_estimate;
-    }
+    const client = await pgPool.connect();
+    try {
+      await client.query('BEGIN');
+      let recommendation = await client.query(
+        'SELECT * FROM recommendations WHERE LOWER(title) = LOWER($1) ORDER BY id LIMIT 1',
+        [data.title]
+      );
 
-    const savedTemplates: TemplateRecord[] = [];
-    for (const t of data.templates) {
-      let existingTemplate: TemplateRecord | undefined;
-      for (const cur of this.templates.values()) {
-        if (cur.recommendation_id === rec.id && cur.title === t.title) {
-          existingTemplate = cur;
-          break;
-        }
-      }
-      if (existingTemplate) {
-        existingTemplate.content = t.content;
-        existingTemplate.format = t.format;
-        savedTemplates.push(existingTemplate);
+      if (recommendation.rowCount) {
+        recommendation = await client.query(
+          `UPDATE recommendations SET
+             category = $2,
+             severity = $3,
+             description = $4,
+             why_recommended = $5,
+             advantages = $6,
+             tradeoffs = $7,
+             git_mechanism = $8,
+             impact_estimate = $9
+           WHERE id = $1
+           RETURNING *`,
+          [
+            recommendation.rows[0].id,
+            data.category,
+            data.severity,
+            data.description,
+            data.why_recommended ?? null,
+            data.advantages ?? null,
+            data.tradeoffs ?? null,
+            data.git_mechanism ?? null,
+            data.impact_estimate ? JSON.stringify(data.impact_estimate) : null,
+          ]
+        );
       } else {
-        const tId = crypto.randomUUID();
-        const newTemplate: TemplateRecord = {
-          id: tId,
-          recommendation_id: rec.id,
-          title: t.title,
-          content: t.content,
-          format: t.format,
-        };
-        this.templates.set(tId, newTemplate);
-        savedTemplates.push(newTemplate);
+        recommendation = await client.query(
+          `INSERT INTO recommendations(
+             title, category, severity, description, why_recommended,
+             advantages, tradeoffs, git_mechanism, impact_estimate
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           RETURNING *`,
+          [
+            data.title,
+            data.category,
+            data.severity,
+            data.description,
+            data.why_recommended ?? null,
+            data.advantages ?? null,
+            data.tradeoffs ?? null,
+            data.git_mechanism ?? null,
+            data.impact_estimate ? JSON.stringify(data.impact_estimate) : null,
+          ]
+        );
       }
-    }
 
-    return {
-      ...rec,
-      templates: savedTemplates,
-    };
+      const recommendationId = recommendation.rows[0].id;
+      const savedTemplates: TemplateRecord[] = [];
+      for (const template of data.templates) {
+        const existing = await client.query(
+          `SELECT id FROM templates
+           WHERE recommendation_id = $1 AND title = $2
+           LIMIT 1`,
+          [recommendationId, template.title]
+        );
+        const result = existing.rowCount
+          ? await client.query(
+              `UPDATE templates SET content = $3, format = $4
+               WHERE recommendation_id = $1 AND title = $2
+               RETURNING *`,
+              [recommendationId, template.title, template.content, template.format]
+            )
+          : await client.query(
+              `INSERT INTO templates(recommendation_id, title, content, format)
+               VALUES ($1,$2,$3,$4)
+               RETURNING *`,
+              [recommendationId, template.title, template.content, template.format]
+            );
+        savedTemplates.push(mapTemplate(result.rows[0]));
+      }
+
+      await client.query('COMMIT');
+      return {
+        ...mapRecommendation(recommendation.rows[0]),
+        templates: savedTemplates,
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
-  // --- Junction Table: Analysis Recommendations ---
   async saveAnalysisRecommendation(data: {
     analysis_id: string;
     recommendation_id: string;
     relevance_score: number;
     reasoning: string;
   }): Promise<AnalysisRecommendationRecord> {
-    if (!this.analyses.has(data.analysis_id)) {
-      throw new Error(`Foreign key violation: analysis_id '${data.analysis_id}' not found`);
-    }
-    if (!this.recommendations.has(data.recommendation_id)) {
-      throw new Error(`Foreign key violation: recommendation_id '${data.recommendation_id}' not found`);
-    }
-
-    const key = `${data.analysis_id}:${data.recommendation_id}`;
-    const record: AnalysisRecommendationRecord = {
-      analysis_id: data.analysis_id,
-      recommendation_id: data.recommendation_id,
-      relevance_score: data.relevance_score,
-      reasoning: data.reasoning,
-      created_at: new Date().toISOString(),
+    const result = await pgPool.query(
+      `INSERT INTO analysis_recommendations(
+         analysis_id, recommendation_id, relevance_score, reasoning
+       ) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (analysis_id, recommendation_id)
+       DO UPDATE SET relevance_score = EXCLUDED.relevance_score, reasoning = EXCLUDED.reasoning
+       RETURNING *`,
+      [data.analysis_id, data.recommendation_id, data.relevance_score, data.reasoning]
+    );
+    return {
+      ...result.rows[0],
+      relevance_score: number(result.rows[0].relevance_score),
+      created_at: iso(result.rows[0].created_at),
     };
-    this.analysisRecommendations.set(key, record);
-    return record;
   }
 
   async getRecommendationsForAnalysis(analysisId: string): Promise<
@@ -500,131 +658,99 @@ class RelationalDatabaseStore {
       templates: TemplateRecord[];
     }>
   > {
-    const results: Array<{
-      recommendation: RecommendationRecord;
-      relevance_score: number;
-      reasoning: string;
-      templates: TemplateRecord[];
-    }> = [];
+    const result = await pgPool.query(
+      `SELECT ar.relevance_score, ar.reasoning,
+              r.*
+       FROM analysis_recommendations ar
+       JOIN recommendations r ON r.id = ar.recommendation_id
+       WHERE ar.analysis_id = $1
+       ORDER BY ar.relevance_score DESC`,
+      [analysisId]
+    );
 
-    for (const ar of this.analysisRecommendations.values()) {
-      if (ar.analysis_id === analysisId) {
-        const rec = this.recommendations.get(ar.recommendation_id);
-        if (rec) {
-          const templates: TemplateRecord[] = [];
-          for (const t of this.templates.values()) {
-            if (t.recommendation_id === rec.id) {
-              templates.push(t);
-            }
-          }
-          results.push({
-            recommendation: rec,
-            relevance_score: ar.relevance_score,
-            reasoning: ar.reasoning,
-            templates,
-          });
-        }
-      }
-    }
-
-    return results.sort((a, b) => b.relevance_score - a.relevance_score);
+    return Promise.all(
+      result.rows.map(async (row) => ({
+        recommendation: mapRecommendation(row),
+        relevance_score: number(row.relevance_score),
+        reasoning: row.reasoning,
+        templates: await this.getTemplatesByRecommendationId(row.id),
+      }))
+    );
   }
 
   async clearAnalysisRecommendations(analysisId: string): Promise<void> {
-    for (const [key, ar] of this.analysisRecommendations.entries()) {
-      if (ar.analysis_id === analysisId) {
-        this.analysisRecommendations.delete(key);
-      }
-    }
+    await pgPool.query('DELETE FROM analysis_recommendations WHERE analysis_id = $1', [analysisId]);
   }
 
-  // --- Benchmarks Operations ---
   async createBenchmark(data: Omit<BenchmarkRecord, 'id' | 'created_at'>): Promise<BenchmarkRecord> {
-    if (!this.analyses.has(data.analysis_id)) {
-      throw new Error(`Foreign key violation: analysis_id '${data.analysis_id}' not found`);
-    }
-
-    const id = crypto.randomUUID();
-    const record: BenchmarkRecord = {
-      id,
-      ...data,
-      created_at: new Date().toISOString(),
-    };
-    this.benchmarks.set(id, record);
-    return record;
+    const result = await pgPool.query(
+      `INSERT INTO benchmarks(
+         analysis_id, strategy, clone_time_sec, data_transferred_mb,
+         disk_usage_mb, relative_percent, is_best
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+       RETURNING *`,
+      [
+        data.analysis_id,
+        data.strategy,
+        data.clone_time_sec,
+        data.data_transferred_mb,
+        data.disk_usage_mb,
+        data.relative_percent,
+        data.is_best,
+      ]
+    );
+    return mapBenchmark(result.rows[0]);
   }
 
   async getBenchmarksByAnalysisId(analysisId: string): Promise<BenchmarkRecord[]> {
-    const list: BenchmarkRecord[] = [];
-    for (const b of this.benchmarks.values()) {
-      if (b.analysis_id === analysisId) {
-        list.push(b);
-      }
-    }
-    return list;
+    const result = await pgPool.query(
+      'SELECT * FROM benchmarks WHERE analysis_id = $1 ORDER BY created_at, strategy',
+      [analysisId]
+    );
+    return result.rows.map(mapBenchmark);
   }
 
   async deleteBenchmarksByAnalysisId(analysisId: string): Promise<void> {
-    for (const [id, b] of this.benchmarks.entries()) {
-      if (b.analysis_id === analysisId) {
-        this.benchmarks.delete(id);
-      }
-    }
+    await pgPool.query('DELETE FROM benchmarks WHERE analysis_id = $1', [analysisId]);
   }
 
-  // --- Recommendation & Template Lookups ---
   async getRecommendationById(id: string): Promise<RecommendationRecord | null> {
-    const rec = this.recommendations.get(id);
-    if (!rec) return null;
-    const recTemplates: TemplateRecord[] = [];
-    for (const t of this.templates.values()) {
-      if (t.recommendation_id === rec.id) {
-        recTemplates.push(t);
-      }
-    }
-    return { ...rec, templates: recTemplates };
+    const result = await pgPool.query('SELECT * FROM recommendations WHERE id = $1 LIMIT 1', [id]);
+    if (!result.rowCount) return null;
+    const recommendation = mapRecommendation(result.rows[0]);
+    recommendation.templates = await this.getTemplatesByRecommendationId(id);
+    return recommendation;
   }
 
   async getTemplatesByRecommendationId(recommendationId: string): Promise<TemplateRecord[]> {
-    const list: TemplateRecord[] = [];
-    for (const t of this.templates.values()) {
-      if (t.recommendation_id === recommendationId) {
-        list.push(t);
-      }
-    }
-    return list;
+    const result = await pgPool.query(
+      'SELECT * FROM templates WHERE recommendation_id = $1 ORDER BY title',
+      [recommendationId]
+    );
+    return result.rows.map(mapTemplate);
   }
 
-  // Diagnostic table stats
-  getTableStats() {
-    return {
-      users: this.users.size,
-      workload_profiles: this.workloadProfiles.size,
-      repositories: this.repositories.size,
-      analyses: this.analyses.size,
-      metrics: this.metrics.size,
-      recommendations: this.recommendations.size,
-      templates: this.templates.size,
-      benchmarks: this.benchmarks.size,
-      analysis_recommendations: this.analysisRecommendations.size,
-    };
-  }
-}
+  async getTableStats(): Promise<Record<string, number>> {
+    const tables = [
+      'users',
+      'workload_profiles',
+      'repositories',
+      'analyses',
+      'metrics',
+      'recommendations',
+      'templates',
+      'benchmarks',
+      'analysis_recommendations',
+    ];
 
-// Singleton database instance
-export const db = new RelationalDatabaseStore();
-
-// Optional PostgreSQL Pool connection (when DATABASE_URL is configured)
-let pgPool: Pool | null = null;
-if (env.DATABASE_URL) {
-  try {
-    pgPool = new Pool({
-      connectionString: env.DATABASE_URL,
-      ssl: env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-    });
-  } catch (err) {
-    console.warn('PostgreSQL Pool initialization warning:', err);
+    const entries = await Promise.all(
+      tables.map(async (table) => {
+        const result = await pgPool.query(`SELECT COUNT(*)::int AS count FROM ${table}`);
+        return [table, number(result.rows[0].count)] as const;
+      })
+    );
+    return Object.fromEntries(entries);
   }
 }
 
-export { pgPool };
+export const db = new PostgresDatabaseStore();
