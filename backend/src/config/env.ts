@@ -25,6 +25,14 @@ const envSchema = z.object({
   PGPOOL_MAX: z.coerce.number().int().positive().default(10),
 
   GITHUB_TOKEN: optionalNonEmptyString,
+}).superRefine((values, context) => {
+  if (values.NODE_ENV !== 'test' && !values.DATABASE_URL && !values.PGPASSWORD) {
+    context.addIssue({
+      code: 'custom',
+      path: ['PGPASSWORD'],
+      message: 'Set PGPASSWORD for local PostgreSQL or provide DATABASE_URL',
+    });
+  }
 });
 
 const parsed = envSchema.safeParse(process.env);

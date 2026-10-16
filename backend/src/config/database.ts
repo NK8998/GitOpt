@@ -45,7 +45,7 @@ const poolConfig = env.DATABASE_URL
       host: env.PGHOST,
       port: env.PGPORT,
       user: env.PGUSER,
-      password: env.PGPASSWORD || undefined,
+      password: env.PGPASSWORD,
       database: env.PGDATABASE,
       ssl: false,
     };
