@@ -7,7 +7,9 @@ export type MetricType =
   | 'large_file_count'
   | 'branch_count'
   | 'packfile_size_mb'
-  | 'history_depth';
+  | 'history_depth'
+  | 'largest_object_mb'
+  | 'estimated_clone_min';
 
 export interface MetricDTO {
   id?: string;
@@ -22,7 +24,25 @@ export interface ExtractedMetrics {
   commit_count: number;
   file_count: number;
   large_file_count: number;
-  [key: string]: number;
+  largest_object_mb?: number;
+  largest_object_path?: string;
+  estimated_clone_min?: number;
+  growth_trend_percent?: number;
+  [key: string]: any;
+}
+
+export interface ObjectDistribution {
+  blobs_mb: number;
+  trees_mb: number;
+  commits_mb: number;
+  tags_mb: number;
+}
+
+export interface LargestObjectInfo {
+  name: string;
+  size_mb: number;
+  type: string;
+  path: string;
 }
 
 export type AnalysisStatus = 'pending' | 'analyzing' | 'completed' | 'failed';
@@ -32,8 +52,14 @@ export interface AnalysisRecord {
   repository_id: string;
   status: AnalysisStatus;
   duration_ms: number | null;
+  optimization_score?: number;
+  current_stage?: string;
+  progress_percent?: number;
   created_at: string;
   metrics?: MetricDTO[];
+  object_distribution?: ObjectDistribution;
+  largest_objects?: LargestObjectInfo[];
+  repository?: RepositoryRecord;
 }
 
 export type RepositorySource = 'github' | 'gitlab' | 'local';

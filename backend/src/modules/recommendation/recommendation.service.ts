@@ -1,7 +1,7 @@
 import { db } from '../../config/database';
 import { rulesEngine } from './rules.engine';
 import { ExtractedMetrics } from '../../types/metrics';
-import { WorkloadSlug, RecommendationRecord, TemplateRecord } from '../../types/rules';
+import { WorkloadSlug, RecommendationRecord, TemplateRecord, ImpactEstimate } from '../../types/rules';
 import { AppError } from '../../middleware/errorHandler';
 
 export interface EvaluatedRecommendationDTO {
@@ -12,6 +12,11 @@ export interface EvaluatedRecommendationDTO {
   relevance_score: number;
   reasoning: string;
   description: string;
+  why_recommended?: string;
+  advantages?: string[];
+  tradeoffs?: string[];
+  git_mechanism?: string;
+  impact_estimate?: ImpactEstimate;
   templates: TemplateRecord[];
 }
 
@@ -71,6 +76,11 @@ export class RecommendationService {
         category: res.category,
         severity: res.severity,
         description: res.description,
+        why_recommended: res.why_recommended,
+        advantages: res.advantages,
+        tradeoffs: res.tradeoffs,
+        git_mechanism: res.git_mechanism,
+        impact_estimate: res.impact_estimate,
         templates: res.templates,
       });
 
@@ -90,6 +100,11 @@ export class RecommendationService {
         relevance_score: res.relevanceScore,
         reasoning: res.reasoning,
         description: recommendation.description,
+        why_recommended: res.why_recommended,
+        advantages: res.advantages,
+        tradeoffs: res.tradeoffs,
+        git_mechanism: res.git_mechanism,
+        impact_estimate: res.impact_estimate,
         templates: recommendation.templates || [],
       });
     }
@@ -121,8 +136,31 @@ export class RecommendationService {
       relevance_score: Number(row.relevance_score),
       reasoning: row.reasoning,
       description: row.recommendation.description,
+      why_recommended: row.recommendation.why_recommended,
+      advantages: row.recommendation.advantages,
+      tradeoffs: row.recommendation.tradeoffs,
+      git_mechanism: row.recommendation.git_mechanism,
+      impact_estimate: row.recommendation.impact_estimate,
       templates: row.templates,
     }));
+  }
+
+  async getRecommendationById(id: string): Promise<RecommendationRecord> {
+    await db.init();
+    const rec = await db.getRecommendationById(id);
+    if (!rec) {
+      throw new AppError(`Recommendation with ID '${id}' not found`, 404);
+    }
+    return rec;
+  }
+
+  async getTemplatesByRecommendationId(recId: string): Promise<TemplateRecord[]> {
+    await db.init();
+    const rec = await db.getRecommendationById(recId);
+    if (!rec) {
+      throw new AppError(`Recommendation with ID '${recId}' not found`, 404);
+    }
+    return db.getTemplatesByRecommendationId(recId);
   }
 }
 

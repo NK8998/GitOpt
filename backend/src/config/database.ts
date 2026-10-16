@@ -10,6 +10,7 @@ import {
   WorkloadProfileRecord,
 } from '../types/metrics';
 import { RecommendationRecord, TemplateRecord } from '../types/rules';
+import { BenchmarkRecord } from '../types/benchmark';
 
 export interface UserRecord {
   id: string;
@@ -45,7 +46,9 @@ class RelationalDatabaseStore {
   metrics: Map<string, MetricRecord> = new Map();
   recommendations: Map<string, RecommendationRecord> = new Map();
   templates: Map<string, TemplateRecord> = new Map();
+  benchmarks: Map<string, BenchmarkRecord> = new Map();
   analysisRecommendations: Map<string, AnalysisRecommendationRecord> = new Map(); // key: `${analysis_id}:${recommendation_id}`
+
 
   private isInitialized = false;
 
@@ -223,6 +226,11 @@ class RelationalDatabaseStore {
     repository_id: string;
     status: AnalysisRecord['status'];
     duration_ms?: number | null;
+    optimization_score?: number;
+    current_stage?: string;
+    progress_percent?: number;
+    object_distribution?: AnalysisRecord['object_distribution'];
+    largest_objects?: AnalysisRecord['largest_objects'];
   }): Promise<AnalysisRecord> {
     if (!this.repositories.has(data.repository_id)) {
       throw new Error(`Foreign key violation: repository_id '${data.repository_id}' not found`);
@@ -234,6 +242,11 @@ class RelationalDatabaseStore {
       repository_id: data.repository_id,
       status: data.status,
       duration_ms: data.duration_ms ?? null,
+      optimization_score: data.optimization_score ?? 72,
+      current_stage: data.current_stage ?? 'discovery',
+      progress_percent: data.progress_percent ?? 0,
+      object_distribution: data.object_distribution,
+      largest_objects: data.largest_objects,
       created_at: new Date().toISOString(),
     };
     this.analyses.set(id, record);
@@ -242,7 +255,7 @@ class RelationalDatabaseStore {
 
   async updateAnalysis(
     id: string,
-    updates: Partial<Pick<AnalysisRecord, 'status' | 'duration_ms'>>
+    updates: Partial<AnalysisRecord>
   ): Promise<AnalysisRecord> {
     const existing = this.analyses.get(id);
     if (!existing) {
@@ -267,10 +280,22 @@ class RelationalDatabaseStore {
       }
     }
 
+    const repo = await this.getRepositoryById(analysis.repository_id);
+
     return {
       ...analysis,
       metrics: metricsList,
+      repository: repo || undefined,
     };
+  }
+
+  async getAllAnalyses(): Promise<AnalysisRecord[]> {
+    const list: AnalysisRecord[] = [];
+    for (const a of this.analyses.values()) {
+      const full = await this.getAnalysisById(a.id);
+      if (full) list.push(full);
+    }
+    return list.sort((a, b) => (b.created_at > a.created_at ? 1 : -1));
   }
 
   async getAnalysesByRepositoryId(repoId: string): Promise<AnalysisRecord[]> {
@@ -296,6 +321,12 @@ class RelationalDatabaseStore {
     for (const [key, ar] of this.analysisRecommendations.entries()) {
       if (ar.analysis_id === id) {
         this.analysisRecommendations.delete(key);
+      }
+    }
+    // CASCADE benchmarks
+    for (const [bId, b] of this.benchmarks.entries()) {
+      if (b.analysis_id === id) {
+        this.benchmarks.delete(bId);
       }
     }
     this.analyses.delete(id);
@@ -366,6 +397,11 @@ class RelationalDatabaseStore {
     category: RecommendationRecord['category'];
     severity: RecommendationRecord['severity'];
     description: string;
+    why_recommended?: string;
+    advantages?: string[];
+    tradeoffs?: string[];
+    git_mechanism?: string;
+    impact_estimate?: RecommendationRecord['impact_estimate'];
     templates: Array<{
       title: string;
       content: string;
@@ -381,9 +417,20 @@ class RelationalDatabaseStore {
         category: data.category,
         severity: data.severity,
         description: data.description,
+        why_recommended: data.why_recommended,
+        advantages: data.advantages,
+        tradeoffs: data.tradeoffs,
+        git_mechanism: data.git_mechanism,
+        impact_estimate: data.impact_estimate,
         templates: [],
       };
       this.recommendations.set(id, rec);
+    } else {
+      rec.why_recommended = data.why_recommended || rec.why_recommended;
+      rec.advantages = data.advantages || rec.advantages;
+      rec.tradeoffs = data.tradeoffs || rec.tradeoffs;
+      rec.git_mechanism = data.git_mechanism || rec.git_mechanism;
+      rec.impact_estimate = data.impact_estimate || rec.impact_estimate;
     }
 
     const savedTemplates: TemplateRecord[] = [];
@@ -491,6 +538,63 @@ class RelationalDatabaseStore {
     }
   }
 
+  // --- Benchmarks Operations ---
+  async createBenchmark(data: Omit<BenchmarkRecord, 'id' | 'created_at'>): Promise<BenchmarkRecord> {
+    if (!this.analyses.has(data.analysis_id)) {
+      throw new Error(`Foreign key violation: analysis_id '${data.analysis_id}' not found`);
+    }
+
+    const id = crypto.randomUUID();
+    const record: BenchmarkRecord = {
+      id,
+      ...data,
+      created_at: new Date().toISOString(),
+    };
+    this.benchmarks.set(id, record);
+    return record;
+  }
+
+  async getBenchmarksByAnalysisId(analysisId: string): Promise<BenchmarkRecord[]> {
+    const list: BenchmarkRecord[] = [];
+    for (const b of this.benchmarks.values()) {
+      if (b.analysis_id === analysisId) {
+        list.push(b);
+      }
+    }
+    return list;
+  }
+
+  async deleteBenchmarksByAnalysisId(analysisId: string): Promise<void> {
+    for (const [id, b] of this.benchmarks.entries()) {
+      if (b.analysis_id === analysisId) {
+        this.benchmarks.delete(id);
+      }
+    }
+  }
+
+  // --- Recommendation & Template Lookups ---
+  async getRecommendationById(id: string): Promise<RecommendationRecord | null> {
+    const rec = this.recommendations.get(id);
+    if (!rec) return null;
+    const recTemplates: TemplateRecord[] = [];
+    for (const t of this.templates.values()) {
+      if (t.recommendation_id === rec.id) {
+        recTemplates.push(t);
+      }
+    }
+    return { ...rec, templates: recTemplates };
+  }
+
+  async getTemplatesByRecommendationId(recommendationId: string): Promise<TemplateRecord[]> {
+    const list: TemplateRecord[] = [];
+    for (const t of this.templates.values()) {
+      if (t.recommendation_id === recommendationId) {
+        list.push(t);
+      }
+    }
+    return list;
+  }
+
   // Diagnostic table stats
   getTableStats() {
     return {
@@ -501,6 +605,7 @@ class RelationalDatabaseStore {
       metrics: this.metrics.size,
       recommendations: this.recommendations.size,
       templates: this.templates.size,
+      benchmarks: this.benchmarks.size,
       analysis_recommendations: this.analysisRecommendations.size,
     };
   }

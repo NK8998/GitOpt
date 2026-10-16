@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react"
+import { FormEvent, useEffect, useState } from "react"
 import {
   Activity,
   ArrowRight,
@@ -8,10 +8,12 @@ import {
   Code2,
   FolderGit2,
   Layers3,
+  Loader2,
   SlidersHorizontal,
 } from "lucide-react"
 import { useNavigate } from "react-router"
 import Button from "../../components/common/Button"
+import { api, WorkloadProfile } from "../../api/client"
 
 type Workload = "local" | "cicd" | "monorepo"
 
@@ -20,10 +22,54 @@ export default function AnalyzePage() {
   const [url, setUrl] = useState("https://github.com/microsoft/git")
   const [workload, setWorkload] = useState<Workload>("local")
   const [advanced, setAdvanced] = useState(false)
-  const submit = (event: FormEvent) => {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [workloadProfiles, setWorkloadProfiles] = useState<WorkloadProfile[]>([])
+
+  useEffect(() => {
+    api.getWorkloads()
+      .then((profiles) => setWorkloadProfiles(profiles))
+      .catch((err) => console.warn("Failed to fetch workloads, will use defaults:", err))
+  }, [])
+
+  const submit = async (event: FormEvent) => {
     event.preventDefault()
-    if (url.trim()) navigate("/progress")
+    if (!url.trim()) return
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      // Map frontend selected workload to backend workload slug
+      const slugMap: Record<Workload, string> = {
+        local: "local_dev",
+        cicd: "ci_cd",
+        monorepo: "monorepo",
+      }
+      const targetSlug = slugMap[workload]
+      const matched = workloadProfiles.find((p) => p.slug === targetSlug)
+      const workloadId = matched?.id || "11111111-1111-4111-8111-111111111111"
+
+      // 1. Register repository
+      const repo = await api.createRepository({
+        url_path: url.trim(),
+        workload_id: workloadId,
+      })
+
+      // 2. Start analysis
+      const analysis = await api.startAnalysis({
+        repository_id: repo.id,
+      })
+
+      // 3. Navigate to progress screen with analysis ID
+      navigate(`/progress?id=${analysis.id}`)
+    } catch (err) {
+      console.error("Analysis submission error:", err)
+      setError(err instanceof Error ? err.message : "Failed to start analysis")
+      setLoading(false)
+    }
   }
+
   const workloadOptions = [
     [
       "local",
@@ -44,6 +90,7 @@ export default function AnalyzePage() {
       "Multiple projects and teams working in different areas.",
     ],
   ] as const
+
   return (
     <div className="page narrow-page">
       <div className="page-heading">
@@ -54,6 +101,13 @@ export default function AnalyzePage() {
           uses it.
         </p>
       </div>
+
+      {error && (
+        <div style={{ padding: '12px 16px', marginBottom: '16px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '8px', color: '#f87171', fontSize: '14px' }}>
+          {error}
+        </div>
+      )}
+
       <form onSubmit={submit} className="setup-card">
         <div className="setup-section">
           <div className="section-number">01</div>
@@ -68,6 +122,7 @@ export default function AnalyzePage() {
                 onChange={(event) => setUrl(event.target.value)}
                 type="url"
                 required
+                disabled={loading}
               />
               <span>PUBLIC</span>
             </div>
@@ -92,6 +147,7 @@ export default function AnalyzePage() {
                   key={id}
                   className={workload === id ? "selected" : ""}
                   onClick={() => setWorkload(id)}
+                  disabled={loading}
                 >
                   <div className="workload-icon">
                     <Icon size={18} />
@@ -111,6 +167,7 @@ export default function AnalyzePage() {
           type="button"
           className="advanced-toggle"
           onClick={() => setAdvanced(!advanced)}
+          disabled={loading}
         >
           <span>
             <SlidersHorizontal size={16} />
@@ -139,18 +196,22 @@ export default function AnalyzePage() {
         )}
         <div className="setup-footer">
           <span>
-            <ShieldText /> Read-only analysis. GitOpt never modifies your
+            <CheckCircle2 size={14} /> Read-only analysis. GitOpt never modifies your
             repository.
           </span>
-          <Button type="submit">
-            Start analysis <ArrowRight size={15} />
+          <Button type="submit" disabled={loading}>
+            {loading ? (
+              <>
+                <Loader2 size={15} className="animate-spin" /> Starting...
+              </>
+            ) : (
+              <>
+                Start analysis <ArrowRight size={15} />
+              </>
+            )}
           </Button>
         </div>
       </form>
     </div>
   )
-}
-
-function ShieldText() {
-  return <CheckCircle2 size={14} />
 }

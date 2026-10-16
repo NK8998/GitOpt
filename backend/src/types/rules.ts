@@ -20,12 +20,26 @@ export interface TemplateRecord {
   format: TemplateFormat;
 }
 
+export interface ImpactEstimate {
+  metric_name: string;
+  current_value: string;
+  optimized_value: string;
+  time_current?: string;
+  time_optimized?: string;
+  is_measured?: boolean;
+}
+
 export interface RecommendationRecord {
   id: string;
   title: string;
   category: RecommendationCategory;
   severity: SeverityLevel;
   description: string;
+  why_recommended?: string;
+  advantages?: string[];
+  tradeoffs?: string[];
+  git_mechanism?: string;
+  impact_estimate?: ImpactEstimate;
   templates?: TemplateRecord[];
 }
 
@@ -45,6 +59,11 @@ export interface RuleEvaluationResult {
   relevanceScore: number;
   reasoning: string;
   description: string;
+  why_recommended?: string;
+  advantages?: string[];
+  tradeoffs?: string[];
+  git_mechanism?: string;
+  impact_estimate?: ImpactEstimate;
   templates: Array<{
     title: string;
     content: string;
@@ -62,6 +81,11 @@ export interface RuleDefinition {
     matched: boolean;
     relevanceScore: number;
     reasoning: string;
+    why_recommended?: string;
+    advantages?: string[];
+    tradeoffs?: string[];
+    git_mechanism?: string;
+    impact_estimate?: ImpactEstimate;
     customizedTemplates: Array<{
       title: string;
       content: string;

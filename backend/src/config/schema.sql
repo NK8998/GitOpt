@@ -89,3 +89,19 @@ CREATE TABLE IF NOT EXISTS analysis_recommendations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_analysis_recom_recom_id ON analysis_recommendations(recommendation_id);
+
+-- 9. Benchmarks Table
+CREATE TABLE IF NOT EXISTS benchmarks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    analysis_id UUID NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
+    strategy VARCHAR(100) NOT NULL,
+    clone_time_sec NUMERIC NOT NULL,
+    data_transferred_mb NUMERIC NOT NULL,
+    disk_usage_mb NUMERIC NOT NULL,
+    relative_percent INTEGER NOT NULL,
+    is_best BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_benchmarks_analysis_id ON benchmarks(analysis_id);
+

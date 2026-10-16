@@ -15,9 +15,13 @@ const triggerAnalysisSchema = z.object({
       large_file_count: z.number().int().nonnegative().optional(),
     })
     .optional(),
+  advanced_options: z.record(z.string(), z.boolean()).optional(),
 });
 
-// POST /api/v1/analyses
+// GET /api/v1/analyses (history)
+router.get('/', analysisController.getAll.bind(analysisController));
+
+// POST /api/v1/analyses (trigger new analysis)
 router.post(
   '/',
   validateRequest({ body: triggerAnalysisSchema }),
@@ -26,5 +30,11 @@ router.post(
 
 // GET /api/v1/analyses/:id
 router.get('/:id', analysisController.getById.bind(analysisController));
+
+// GET /api/v1/analyses/:id/recommendations
+router.get('/:id/recommendations', analysisController.getRecommendations.bind(analysisController));
+
+// GET /api/v1/analyses/:id/benchmarks
+router.get('/:id/benchmarks', analysisController.getBenchmarks.bind(analysisController));
 
 export default router;

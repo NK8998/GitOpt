@@ -8,6 +8,7 @@ import workloadRoutes from './modules/workload/workload.routes';
 import repositoryRoutes from './modules/repository/repository.routes';
 import analysisRoutes from './modules/analysis/analysis.routes';
 import recommendationRoutes from './modules/recommendation/recommendation.routes';
+import benchmarkRoutes from './modules/benchmark/benchmark.routes';
 
 export function createApp(): Application {
   const app = express();
@@ -38,12 +39,13 @@ export function createApp(): Application {
     });
   });
 
-  // REST API Modules Scope (Weeks 1-4)
+  // REST API Modules Scope
   app.use('/api/v1/auth', authRoutes);
   app.use('/api/v1/workloads', workloadRoutes);
   app.use('/api/v1/repositories', repositoryRoutes);
   app.use('/api/v1/analyses', analysisRoutes);
   app.use('/api/v1/recommendations', recommendationRoutes);
+  app.use('/api/v1/benchmarks', benchmarkRoutes);
 
   // Global Error Handler
   app.use(errorHandler);
