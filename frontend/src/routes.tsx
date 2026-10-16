@@ -6,6 +6,7 @@ import ConfigurationPage from "./pages/Configuration/ConfigurationPage"
 import HomePage from "./pages/Home/HomePage"
 import OverviewPage from "./pages/Overview/OverviewPage"
 import ProgressPage from "./pages/Progress/ProgressPage"
+import RecommendationDetailPage from "./pages/Recommendations/RecommendationDetailPage"
 import RecommendationsPage from "./pages/Recommendations/RecommendationsPage"
 
 export const router = createBrowserRouter([
@@ -17,6 +18,7 @@ export const router = createBrowserRouter([
       { path: "progress", Component: ProgressPage },
       { path: "overview", Component: OverviewPage },
       { path: "recommendations", Component: RecommendationsPage },
+      { path: "recommendations/:id", Component: RecommendationDetailPage },
       { path: "benchmarks", Component: BenchmarksPage },
       { path: "configuration", Component: ConfigurationPage },
     ],

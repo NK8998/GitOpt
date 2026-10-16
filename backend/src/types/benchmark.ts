@@ -24,6 +24,8 @@ export interface BenchmarkComparisonDTO {
   best_strategy: string;
   estimated_time_saved: string;
   percent_faster: number;
+  is_estimated: boolean;
+  methodology: string;
   strategies: BenchmarkStrategyDTO[];
   chart_series: {
     clone_time_min: number[];

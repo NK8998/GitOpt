@@ -15,6 +15,9 @@ function formatSizeMb(mb: number): string {
   return `${Math.round(mb)} MB`;
 }
 
+const METHODOLOGY =
+  'Modelled strategy comparison derived from repository size and the analysis clone-time estimate. These values are not measured Git operation timings.';
+
 export class BenchmarkService {
   async generateBenchmarks(analysisId: string): Promise<BenchmarkComparisonDTO> {
     await db.init();
@@ -24,7 +27,6 @@ export class BenchmarkService {
       throw new AppError(`Analysis with ID '${analysisId}' not found`, 404);
     }
 
-    // Determine baseline numbers from metrics
     const metricsMap: Record<string, number> = {};
     if (analysis.metrics) {
       for (const m of analysis.metrics) {
@@ -32,16 +34,18 @@ export class BenchmarkService {
       }
     }
 
-    const repoSizeMb = metricsMap.repo_size_mb || 33177.6;
-    const baseDurationSec = Math.max(
-      120,
-      Math.round((metricsMap.estimated_clone_min || 28) * 60 + 14)
-    );
+    const repoSizeMb = metricsMap.repo_size_mb;
+    if (!Number.isFinite(repoSizeMb) || repoSizeMb < 0) {
+      throw new AppError('Repository size is required before benchmark estimates can be generated.', 422);
+    }
 
-    // Clear previous benchmarks for this analysis
+    const estimatedCloneMinutes = metricsMap.estimated_clone_min;
+    const baseDurationSec = Number.isFinite(estimatedCloneMinutes)
+      ? Math.max(1, Math.round(estimatedCloneMinutes * 60))
+      : Math.max(1, Math.round((repoSizeMb / 20)));
+
     await db.deleteBenchmarksByAnalysisId(analysisId);
 
-    // Define 4 strategies
     const strategyConfigs = [
       {
         strategy: 'Full clone',
@@ -53,7 +57,7 @@ export class BenchmarkService {
       },
       {
         strategy: 'Shallow clone',
-        timeSec: Math.round(baseDurationSec * 0.43),
+        timeSec: Math.max(1, Math.round(baseDurationSec * 0.43)),
         transferMb: repoSizeMb * 0.44,
         diskMb: repoSizeMb * 0.45,
         relativePercent: 43,
@@ -61,7 +65,7 @@ export class BenchmarkService {
       },
       {
         strategy: 'Partial clone',
-        timeSec: Math.round(baseDurationSec * 0.30),
+        timeSec: Math.max(1, Math.round(baseDurationSec * 0.30)),
         transferMb: repoSizeMb * 0.21,
         diskMb: repoSizeMb * 0.27,
         relativePercent: 30,
@@ -69,7 +73,7 @@ export class BenchmarkService {
       },
       {
         strategy: 'Partial + sparse',
-        timeSec: Math.round(baseDurationSec * 0.24),
+        timeSec: Math.max(1, Math.round(baseDurationSec * 0.24)),
         transferMb: repoSizeMb * 0.16,
         diskMb: repoSizeMb * 0.20,
         relativePercent: 24,
@@ -100,16 +104,17 @@ export class BenchmarkService {
     }
 
     const timeSavedSec = baseDurationSec - Math.round(baseDurationSec * 0.24);
-    const percentFaster = 76;
 
     return {
       analysis_id: analysisId,
       best_strategy: 'Partial clone + sparse checkout',
       estimated_time_saved: formatDuration(timeSavedSec),
-      percent_faster: percentFaster,
+      percent_faster: 76,
+      is_estimated: true,
+      methodology: METHODOLOGY,
       strategies,
       chart_series: {
-        clone_time_min: strategyConfigs.map((c) => Math.round(c.timeSec / 60)),
+        clone_time_min: strategyConfigs.map((c) => +(c.timeSec / 60).toFixed(1)),
         data_transferred_gb: strategyConfigs.map((c) => +(c.transferMb / 1024).toFixed(1)),
         disk_usage_gb: strategyConfigs.map((c) => +(c.diskMb / 1024).toFixed(1)),
         labels: ['Full', 'Shallow', 'Partial', 'P + S'],
@@ -145,12 +150,14 @@ export class BenchmarkService {
 
     return {
       analysis_id: analysisId,
-      best_strategy: 'Partial clone + sparse checkout',
+      best_strategy: bestClone.strategy,
       estimated_time_saved: formatDuration(timeSavedSec),
-      percent_faster: 76,
+      percent_faster: Math.max(0, Math.round((1 - bestClone.relative_percent / 100) * 100)),
+      is_estimated: true,
+      methodology: METHODOLOGY,
       strategies,
       chart_series: {
-        clone_time_min: rows.map((c) => Math.round(c.clone_time_sec / 60)),
+        clone_time_min: rows.map((c) => +(c.clone_time_sec / 60).toFixed(1)),
         data_transferred_gb: rows.map((c) => +(c.data_transferred_mb / 1024).toFixed(1)),
         disk_usage_gb: rows.map((c) => +(c.disk_usage_mb / 1024).toFixed(1)),
         labels: rows.map((c) => {

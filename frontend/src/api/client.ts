@@ -51,6 +51,10 @@ export interface AnalysisItem {
   object_distribution?: ObjectDistribution;
   largest_objects?: LargestObjectItem[];
   repository?: RepositoryItem;
+  metric_source?: 'github_api' | 'git_cli' | 'simulated';
+  metric_notes?: string[];
+  default_branch?: string;
+  tree_truncated?: boolean;
 }
 
 export interface ImpactEstimate {
@@ -100,6 +104,8 @@ export interface BenchmarkComparison {
   best_strategy: string;
   estimated_time_saved: string;
   percent_faster: number;
+  is_estimated: boolean;
+  methodology: string;
   strategies: BenchmarkStrategy[];
   chart_series: {
     clone_time_min: number[];
@@ -140,7 +146,7 @@ export const api = {
   }): Promise<RepositoryItem> => {
     let name = data.name;
     if (!name) {
-      const parts = data.url_path.replace(/\/+$/, '').split('/');
+      const parts = data.url_path.replace(/\/+$/, '').replace(/\.git$/, '').split('/');
       name = parts.slice(-2).join('/') || 'repository';
     }
     return request<RepositoryItem>('/api/v1/repositories', {
@@ -177,6 +183,10 @@ export const api = {
 
   getRecommendation: async (id: string): Promise<RecommendationItem> => {
     return request<RecommendationItem>(`/api/v1/recommendations/${id}`);
+  },
+
+  getTemplates: async (recommendationId: string): Promise<TemplateItem[]> => {
+    return request<TemplateItem[]>(`/api/v1/recommendations/${recommendationId}/templates`);
   },
 
   getBenchmarks: async (analysisId: string): Promise<BenchmarkComparison> => {

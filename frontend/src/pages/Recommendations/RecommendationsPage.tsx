@@ -5,44 +5,59 @@ import Button from "../../components/common/Button"
 import CopyButton from "../../components/common/CopyButton"
 import { api, AnalysisItem, RecommendationItem } from "../../api/client"
 
+function formatRepositorySize(analysis: AnalysisItem | null) {
+  const metric = analysis?.metrics?.find((item) => item.metric_type === "repo_size_mb")
+  if (!metric) return "Repository size unavailable"
+  return metric.metric_value >= 1024
+    ? `${(metric.metric_value / 1024).toFixed(1)} GB repository`
+    : `${metric.metric_value.toFixed(1)} MB repository`
+}
+
 export default function RecommendationsPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const analysisId = searchParams.get("id") || ""
+  const requestedAnalysisId = searchParams.get("id") || ""
   const [analysis, setAnalysis] = useState<AnalysisItem | null>(null)
   const [items, setItems] = useState<RecommendationItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     async function loadData() {
       setLoading(true)
+      setError(null)
       try {
-        let currentId = analysisId
+        let currentId = requestedAnalysisId
         if (!currentId) {
           const all = await api.getAllAnalyses()
-          if (all.length > 0) currentId = all[0].id
+          currentId = all[0]?.id || ""
         }
+        if (!currentId) throw new Error("No repository analysis exists yet.")
 
-        if (currentId) {
-          const [ana, recs] = await Promise.all([
-            api.getAnalysis(currentId),
-            api.getRecommendations(currentId),
-          ])
-          setAnalysis(ana)
-          setItems(recs)
-        }
+        const [ana, recs] = await Promise.all([
+          api.getAnalysis(currentId),
+          api.getRecommendations(currentId),
+        ])
+        setAnalysis(ana)
+        setItems(recs)
       } catch (err) {
-        console.warn("Failed to load recommendations:", err)
+        setError(err instanceof Error ? err.message : "Failed to load recommendations")
       } finally {
         setLoading(false)
       }
     }
     loadData()
-  }, [analysisId])
+  }, [requestedAnalysisId])
 
-  const workloadName = analysis?.repository?.workload?.name || "Local development"
-  const shortId = (analysis?.id || "8C4F-21A").slice(0, 8).toUpperCase()
-  const currentIdParam = analysis?.id ? `?id=${analysis.id}` : ""
+  if (loading) return <div className="page"><div className="page-heading"><h1>Loading recommendations…</h1></div></div>
+  if (error || !analysis) {
+    return <div className="page"><div className="page-heading"><h1>Recommendations unavailable</h1><p>{error || "No analysis was returned."}</p></div></div>
+  }
+
+  const workloadName = analysis.repository?.workload?.name || "Unknown workload"
+  const shortId = analysis.id.slice(0, 8).toUpperCase()
+  const currentIdParam = `?id=${analysis.id}`
+  const bestFit = items[0]?.title || "No rule matched"
 
   return (
     <div className="page">
@@ -50,40 +65,35 @@ export default function RecommendationsPage() {
         <div>
           <div className="eyebrow">EVIDENCE-BASED</div>
           <h1>Optimization recommendations</h1>
-          <p>
-            Based on repository characteristics and the <b>{workloadName}</b>{" "}
-            workload.
-          </p>
+          <p>Deterministic Git optimization rules matched against repository characteristics and the <b>{workloadName}</b> workload.</p>
         </div>
         <span className="analysis-id">ANALYSIS ID&nbsp; {shortId}</span>
       </div>
 
       <div className="evidence-chain">
         {[
-          ["OBSERVED", `${analysis?.metrics?.find(m => m.metric_type === 'repo_size_mb')?.metric_value ? (analysis.metrics.find(m => m.metric_type === 'repo_size_mb')!.metric_value / 1024).toFixed(1) + " GB" : "28.6 GB"} Git data`],
+          ["OBSERVED", formatRepositorySize(analysis)],
           ["WORKLOAD", workloadName],
-          ["BOTTLENECK", "Expensive setup & clone time"],
-          ["BEST FIT", items[0]?.title ? items[0].title.split('(')[0].trim() : "Partial clone"],
+          ["EVALUATION", `${items.length} matching rule${items.length === 1 ? "" : "s"}`],
+          ["BEST FIT", bestFit],
         ].map(([label, value], index) => (
           <div key={label}>
-            <span>
-              <small>{label}</small>
-              <strong>{value}</strong>
-            </span>
+            <span><small>{label}</small><strong>{value}</strong></span>
             {index < 3 && <ArrowRight size={15} />}
           </div>
         ))}
       </div>
 
       <div className="recommendation-list">
-        {items.map((item, index) => {
+        {items.length === 0 ? (
+          <section className="panel" style={{ padding: 24 }}>
+            <h2>No optimization rule matched</h2>
+            <p>GitOpt did not find enough evidence to recommend one of the currently supported strategies for this repository and workload. This is preferable to recommending an optimization without evidence.</p>
+          </section>
+        ) : items.map((item, index) => {
           const numberStr = (index + 1).toString().padStart(2, "0")
-          const commandText = item.templates?.[0]?.content || "git clone --filter=blob:none <repository_url>"
-          const impact = item.impact_estimate || {
-            metric_name: "Initial download",
-            current_value: "32.4 GB",
-            optimized_value: "6.8 GB",
-          }
+          const commandText = item.templates?.[0]?.content
+          const impact = item.impact_estimate
 
           return (
             <article className="recommendation-card" key={item.recommendation_id}>
@@ -91,48 +101,33 @@ export default function RecommendationsPage() {
               <div className="recommendation-main">
                 <div className="recommendation-title">
                   <div>
-                    <span
-                      className={
-                        item.severity === "critical" || item.severity === "high"
-                          ? "impact-tag high"
-                          : "impact-tag"
-                      }
-                    >
-                      {item.severity.toUpperCase()} IMPACT
-                    </span>
+                    <span className={item.severity === "critical" || item.severity === "high" ? "impact-tag high" : "impact-tag"}>{item.severity.toUpperCase()} IMPACT</span>
                     <h2>{item.title}</h2>
                   </div>
-                  <span className="confidence">
-                    <CheckCircle2 size={13} /> High confidence ({Math.round(item.relevance_score * 100)}%)
-                  </span>
+                  <span className="confidence"><CheckCircle2 size={13} /> Confidence {Math.round(item.relevance_score * 100)}%</span>
                 </div>
                 <div className="why">
                   <small>WHY THIS WAS RECOMMENDED</small>
-                  <p>{item.why_recommended || item.reasoning || item.description}</p>
+                  <p>{item.why_recommended || item.reasoning}</p>
                 </div>
                 <div className="benefit-command">
                   <div className="benefit">
-                    <small>POTENTIAL BENEFIT · ESTIMATED</small>
-                    <span>{impact.metric_name}</span>
-                    <strong>
-                      {impact.current_value} <ArrowRight size={15} />{" "}
-                      <em>{impact.optimized_value}</em>
-                    </strong>
-                    <div style={{ marginTop: '12px' }}>
-                      <Button
-                        variant="secondary"
-                        onClick={() => navigate(`/recommendations/${item.recommendation_id}?analysisId=${analysis?.id || ""}`)}
-                      >
-                        View Details <ChevronRight size={13} />
+                    <small>{impact?.is_measured ? "BENEFIT · MEASURED" : "POTENTIAL BENEFIT · ESTIMATED"}</small>
+                    {impact ? (
+                      <>
+                        <span>{impact.metric_name}</span>
+                        <strong>{impact.current_value} <ArrowRight size={15} /> <em>{impact.optimized_value}</em></strong>
+                      </>
+                    ) : <span>No impact estimate supplied by this rule.</span>}
+                    <div style={{ marginTop: 12 }}>
+                      <Button variant="secondary" onClick={() => navigate(`/recommendations/${item.recommendation_id}?analysisId=${analysis.id}`)}>
+                        View details <ChevronRight size={13} />
                       </Button>
                     </div>
                   </div>
                   <div className="code-block">
-                    <div>
-                      <Terminal size={13} /> RECOMMENDED COMMAND
-                    </div>
-                    <pre>{commandText}</pre>
-                    <CopyButton text={commandText} />
+                    <div><Terminal size={13} /> GENERATED TEMPLATE</div>
+                    {commandText ? <><pre>{commandText}</pre><CopyButton text={commandText} /></> : <pre>No shell template for this recommendation.</pre>}
                   </div>
                 </div>
               </div>
@@ -142,18 +137,11 @@ export default function RecommendationsPage() {
       </div>
 
       <div className="recommendation-footer">
-        <div>
-          <BarChart3 size={19} />
-          <span>
-            <strong>Want to validate these estimates?</strong>
-            <small>
-              Compare supported Git strategies against the repository profile.
-            </small>
-          </span>
+        <div><BarChart3 size={19} /><span><strong>Review modelled strategy impact</strong><small>Strategy comparisons are estimates until GitOpt runs isolated Git operations and records measurements.</small></span></div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <Button variant="secondary" onClick={() => navigate(`/configuration${currentIdParam}`)}>Download templates</Button>
+          <Button onClick={() => navigate(`/benchmarks${currentIdParam}`)}>View estimates <ArrowRight size={15} /></Button>
         </div>
-        <Button onClick={() => navigate(`/benchmarks${currentIdParam}`)}>
-          View benchmarks <ArrowRight size={15} />
-        </Button>
       </div>
     </div>
   )

@@ -1,4 +1,4 @@
-export type MetricUnit = 'MB' | 'count' | 'ms' | 'seconds' | 'percentage';
+export type MetricUnit = 'MB' | 'count' | 'ms' | 'seconds' | 'minutes' | 'percentage';
 
 export type MetricType =
   | 'repo_size_mb'
@@ -6,10 +6,12 @@ export type MetricType =
   | 'file_count'
   | 'large_file_count'
   | 'branch_count'
+  | 'git_objects_count'
   | 'packfile_size_mb'
   | 'history_depth'
   | 'largest_object_mb'
-  | 'estimated_clone_min';
+  | 'estimated_clone_min'
+  | 'current_tree_blob_mb';
 
 export interface MetricDTO {
   id?: string;
@@ -24,9 +26,12 @@ export interface ExtractedMetrics {
   commit_count: number;
   file_count: number;
   large_file_count: number;
+  branch_count?: number;
+  git_objects_count?: number;
   largest_object_mb?: number;
   largest_object_path?: string;
   estimated_clone_min?: number;
+  current_tree_blob_mb?: number;
   growth_trend_percent?: number;
   [key: string]: any;
 }
@@ -46,6 +51,7 @@ export interface LargestObjectInfo {
 }
 
 export type AnalysisStatus = 'pending' | 'analyzing' | 'completed' | 'failed';
+export type MetricSource = 'github_api' | 'git_cli' | 'simulated';
 
 export interface AnalysisRecord {
   id: string;
@@ -60,6 +66,11 @@ export interface AnalysisRecord {
   object_distribution?: ObjectDistribution;
   largest_objects?: LargestObjectInfo[];
   repository?: RepositoryRecord;
+  metric_source?: MetricSource;
+  metric_notes?: string[];
+  default_branch?: string;
+  tree_truncated?: boolean;
+  error_message?: string;
 }
 
 export type RepositorySource = 'github' | 'gitlab' | 'local';
