@@ -70,6 +70,7 @@ export interface AnalysisRecord {
   metric_notes?: string[];
   default_branch?: string;
   tree_truncated?: boolean;
+  error_message?: string;
 }
 
 export type RepositorySource = 'github' | 'gitlab' | 'local';
