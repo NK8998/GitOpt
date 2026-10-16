@@ -16,6 +16,7 @@ import {
 import { useLocation, useNavigate } from "react-router"
 import Brand from "../common/Brand"
 import Button from "../common/Button"
+import { useRepository } from "../../context/RepositoryContext"
 
 export default function Sidebar({
   open,
@@ -26,6 +27,7 @@ export default function Sidebar({
 }) {
   const location = useLocation()
   const navigate = useNavigate()
+  const { currentRepository } = useRepository()
   const nav = [
     ["/overview", CircleGauge, "Overview"],
     ["/recommendations", Sparkles, "Recommendations"],
@@ -82,7 +84,9 @@ export default function Sidebar({
             <FolderGit2 size={16} />
           </div>
           <span>
-            <strong>microsoft/git</strong>
+            <strong>
+              {currentRepository?.name || "No repository selected"}
+            </strong>
             <small>Local development</small>
           </span>
           <ChevronDown size={14} />
