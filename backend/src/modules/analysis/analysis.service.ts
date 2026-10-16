@@ -3,10 +3,18 @@ import util from 'util';
 import fs from 'fs';
 import path from 'path';
 import { db } from '../../config/database';
-import { AnalysisRecord, ExtractedMetrics, MetricDTO } from '../../types/metrics';
+import {
+  AnalysisRecord,
+  ExtractedMetrics,
+  LargestObjectInfo,
+  MetricDTO,
+  MetricSource,
+  ObjectDistribution,
+} from '../../types/metrics';
 import { AppError } from '../../middleware/errorHandler';
 import { recommendationService } from '../recommendation/recommendation.service';
 import { benchmarkService } from '../benchmark/benchmark.service';
+import { githubMetricsService } from './githubMetrics.service';
 
 const execPromise = util.promisify(exec);
 
@@ -14,6 +22,16 @@ export interface TriggerAnalysisInput {
   repository_id: string;
   simulated_metrics?: Partial<ExtractedMetrics>;
   advanced_options?: Record<string, boolean>;
+}
+
+interface CollectionResult {
+  metrics: ExtractedMetrics;
+  objectDistribution: ObjectDistribution;
+  largestObjects: LargestObjectInfo[];
+  metricSource: MetricSource;
+  metricNotes: string[];
+  defaultBranch?: string;
+  treeTruncated?: boolean;
 }
 
 export class AnalysisService {
@@ -26,93 +44,59 @@ export class AnalysisService {
     }
 
     const startTime = Date.now();
-
-    // Create initial analysis record
     const analysis = await db.createAnalysis({
       repository_id: input.repository_id,
       status: 'analyzing',
       current_stage: 'discovery',
-      progress_percent: 20,
+      progress_percent: 10,
     });
 
     try {
-      let extracted: ExtractedMetrics;
+      await db.updateAnalysis(analysis.id, {
+        current_stage: 'metadata',
+        progress_percent: 25,
+      });
 
-      if (input.simulated_metrics && Object.keys(input.simulated_metrics).length > 0) {
-        extracted = {
-          repo_size_mb: input.simulated_metrics.repo_size_mb ?? 33177.6,
-          commit_count: input.simulated_metrics.commit_count ?? 184293,
-          file_count: input.simulated_metrics.file_count ?? 96420,
-          large_file_count: input.simulated_metrics.large_file_count ?? 1284,
-          git_objects_count: 2108493,
-          largest_object_mb: 1843.2,
-          largest_object_path: 'models/model.bin',
-          estimated_clone_min: 28,
-          growth_trend_percent: 42,
-        };
-      } else {
-        extracted = await this.extractGitMetrics(repository.url_path, repository.source);
+      const collected = await this.collectMetrics(repository.url_path, repository.source, input);
+
+      await db.updateAnalysis(analysis.id, {
+        current_stage: 'metrics',
+        progress_percent: 60,
+      });
+
+      const savedMetrics = await this.persistMetrics(analysis.id, collected.metrics);
+      const optimizationScore = this.calculateOpportunityScore(collected.metrics);
+
+      await db.updateAnalysis(analysis.id, {
+        current_stage: 'recommendations',
+        progress_percent: 80,
+        metric_source: collected.metricSource,
+        metric_notes: collected.metricNotes,
+        default_branch: collected.defaultBranch,
+        tree_truncated: collected.treeTruncated,
+        object_distribution: collected.objectDistribution,
+        largest_objects: collected.largestObjects,
+        optimization_score: optimizationScore,
+      });
+
+      // Recommendations are deterministic and use only the measured/derived metric set.
+      await recommendationService.evaluate(analysis.id);
+
+      // Benchmarks are currently modelled estimates. The benchmark service keeps them
+      // separate from observed repository metrics and the UI labels them accordingly.
+      try {
+        await benchmarkService.generateBenchmarks(analysis.id);
+      } catch (err) {
+        console.warn('Benchmark generation warning:', err);
       }
 
       const durationMs = Date.now() - startTime;
-
-      // Persist metrics
-      const metricEntries: Array<{ type: string; value: number; unit: string }> = [
-        { type: 'repo_size_mb', value: extracted.repo_size_mb, unit: 'MB' },
-        { type: 'commit_count', value: extracted.commit_count, unit: 'count' },
-        { type: 'file_count', value: extracted.file_count, unit: 'count' },
-        { type: 'large_file_count', value: extracted.large_file_count, unit: 'count' },
-        { type: 'git_objects_count', value: extracted.git_objects_count || 2108493, unit: 'count' },
-        { type: 'largest_object_mb', value: extracted.largest_object_mb || 1843.2, unit: 'MB' },
-        { type: 'estimated_clone_min', value: extracted.estimated_clone_min || 28, unit: 'minutes' },
-        { type: 'growth_trend_percent', value: extracted.growth_trend_percent || 42, unit: 'percentage' },
-      ];
-
-      const savedMetrics: MetricDTO[] = [];
-      for (const m of metricEntries) {
-        const saved = await db.createMetric({
-          analysis_id: analysis.id,
-          metric_type: m.type,
-          metric_value: m.value,
-          unit: m.unit,
-        });
-        savedMetrics.push(saved);
-      }
-
-      // Structure object distribution and largest objects
-      const totalMb = extracted.repo_size_mb;
-      const objectDistribution = {
-        blobs_mb: Math.round(totalMb * 0.88 * 10) / 10,
-        trees_mb: Math.round(totalMb * 0.086 * 10) / 10,
-        commits_mb: Math.round(totalMb * 0.025 * 10) / 10,
-        tags_mb: Math.round(totalMb * 0.006 * 10) / 10,
-      };
-
-      const largestObjects = [
-        { name: 'model.bin', size_mb: 1843.2, type: 'Blob', path: '/models/model.bin' },
-        { name: 'dataset.zip', size_mb: 940.0, type: 'Blob', path: '/data/dataset.zip' },
-        { name: 'weights.safetensors', size_mb: 680.0, type: 'Blob', path: '/checkpoints/weights.safetensors' },
-        { name: 'archive.tar.gz', size_mb: 350.0, type: 'Blob', path: '/releases/archive.tar.gz' },
-      ];
-
-      // Mark analysis completed
       const completedAnalysis = await db.updateAnalysis(analysis.id, {
         status: 'completed',
-        current_stage: 'evaluation',
+        current_stage: 'completed',
         progress_percent: 100,
-        duration_ms: Math.max(durationMs, 1420),
-        optimization_score: 72,
-        object_distribution: objectDistribution,
-        largest_objects: largestObjects,
+        duration_ms: durationMs,
       });
-
-      // Pre-evaluate recommendations and benchmarks so subsequent screens load instantly
-      try {
-        await recommendationService.evaluate(analysis.id);
-        await benchmarkService.generateBenchmarks(analysis.id);
-      } catch (err) {
-        console.warn('Pre-evaluation warning:', err);
-      }
 
       return {
         ...completedAnalysis,
@@ -123,8 +107,11 @@ export class AnalysisService {
       console.error('Git analysis error:', error);
       await db.updateAnalysis(analysis.id, {
         status: 'failed',
+        current_stage: 'failed',
         duration_ms: Date.now() - startTime,
       });
+
+      if (error instanceof AppError) throw error;
       throw new AppError(
         `Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
         500
@@ -146,105 +133,230 @@ export class AnalysisService {
     return db.getAllAnalyses();
   }
 
-  private async extractGitMetrics(
+  private async collectMetrics(
     urlOrPath: string,
-    source: string
-  ): Promise<ExtractedMetrics> {
+    source: string,
+    input: TriggerAnalysisInput
+  ): Promise<CollectionResult> {
+    if (input.simulated_metrics && Object.keys(input.simulated_metrics).length > 0) {
+      if (process.env.NODE_ENV !== 'test') {
+        throw new AppError('simulated_metrics is only supported in the test environment.', 400);
+      }
+      return this.buildTestMetrics(input.simulated_metrics);
+    }
+
+    if (source === 'github') {
+      const result = await githubMetricsService.collect(urlOrPath);
+      return {
+        metrics: result.metrics,
+        objectDistribution: result.objectDistribution,
+        largestObjects: result.largestObjects,
+        metricSource: result.metricSource,
+        metricNotes: result.metricNotes,
+        defaultBranch: result.defaultBranch,
+        treeTruncated: result.treeTruncated,
+      };
+    }
+
+    if (source === 'local' || urlOrPath.startsWith('file://')) {
+      return this.collectLocalMetrics(urlOrPath);
+    }
+
+    throw new AppError(
+      `Repository source '${source}' is not supported by the analyzer yet. GitHub and local Git repositories are currently supported.`,
+      400
+    );
+  }
+
+  private async collectLocalMetrics(urlOrPath: string): Promise<CollectionResult> {
     let localPath = urlOrPath;
     if (localPath.startsWith('file://')) {
       localPath = localPath.replace('file://', '');
     }
 
-    const isLocalDir = fs.existsSync(localPath) && fs.statSync(localPath).isDirectory();
-    const isGitRepo = isLocalDir && fs.existsSync(path.join(localPath, '.git'));
+    if (!fs.existsSync(localPath) || !fs.statSync(localPath).isDirectory()) {
+      throw new AppError(`Local repository path '${localPath}' does not exist.`, 404);
+    }
 
-    if (isGitRepo) {
+    try {
+      await execPromise('git rev-parse --is-inside-work-tree', { cwd: localPath, timeout: 5000 });
+    } catch {
+      throw new AppError(`Path '${localPath}' is not a Git working tree.`, 400);
+    }
+
+    const [commitResult, filesResult, branchesResult, countObjectsResult, branchResult] = await Promise.all([
+      execPromise('git rev-list --count HEAD', { cwd: localPath, timeout: 15000 }),
+      execPromise('git ls-files -z', { cwd: localPath, timeout: 15000, maxBuffer: 20 * 1024 * 1024 }),
+      execPromise('git for-each-ref --format="%(refname)" refs/heads', { cwd: localPath, timeout: 10000 }),
+      execPromise('git count-objects -v', { cwd: localPath, timeout: 10000 }),
+      execPromise('git branch --show-current', { cwd: localPath, timeout: 5000 }),
+    ]);
+
+    const files = filesResult.stdout.split('\0').filter(Boolean);
+    const fileEntries: LargestObjectInfo[] = [];
+    let currentTreeBytes = 0;
+    let largeFileCount = 0;
+    const largeThresholdBytes = 10 * 1024 * 1024;
+
+    for (const relativePath of files) {
+      const absolutePath = path.resolve(localPath, relativePath);
       try {
-        const { stdout: commitsOut } = await execPromise('git rev-list --count HEAD', {
-          cwd: localPath,
-          timeout: 5000,
+        const stat = fs.statSync(absolutePath);
+        if (!stat.isFile()) continue;
+        currentTreeBytes += stat.size;
+        if (stat.size >= largeThresholdBytes) largeFileCount += 1;
+        fileEntries.push({
+          name: path.basename(relativePath),
+          size_mb: this.bytesToMb(stat.size),
+          type: 'Blob',
+          path: relativePath,
         });
-        const commitCount = parseInt(commitsOut.trim(), 10) || 184293;
-
-        const { stdout: filesOut } = await execPromise('git ls-files | wc -l', {
-          cwd: localPath,
-          timeout: 5000,
-        });
-        const fileCount = parseInt(filesOut.trim(), 10) || 96420;
-
-        let repoSizeMb = 33177.6;
-        try {
-          const { stdout: duOut } = await execPromise('du -sm .git', {
-            cwd: localPath,
-            timeout: 5000,
-          });
-          const parsedMb = parseFloat(duOut.trim().split('\t')[0]);
-          if (!isNaN(parsedMb) && parsedMb > 0) {
-            repoSizeMb = parsedMb;
-          }
-        } catch {
-          // fallback
-        }
-
-        return {
-          repo_size_mb: Math.round(repoSizeMb * 10) / 10,
-          commit_count: commitCount,
-          file_count: fileCount,
-          large_file_count: 1284,
-          git_objects_count: 2108493,
-          largest_object_mb: 1843.2,
-          largest_object_path: 'models/model.bin',
-          estimated_clone_min: Math.max(1, Math.round(repoSizeMb / 1200)),
-          growth_trend_percent: 42,
-        };
-      } catch (err) {
-        console.warn('Local git CLI inspection failed, using simulated metrics:', err);
+      } catch {
+        // Skip files that are absent from the current checkout (for example sparse paths).
       }
     }
 
-    // Realistic simulated metrics consistent with frontend expectations
-    const isMicrosoftGit = urlOrPath.toLowerCase().includes('microsoft/git') || urlOrPath.toLowerCase().includes('git');
-    if (isMicrosoftGit) {
-      return {
-        repo_size_mb: 33177.6, // 32.4 GB
-        commit_count: 184293,
-        file_count: 96420,
-        large_file_count: 1284,
-        git_objects_count: 2108493,
-        largest_object_mb: 1843.2,
-        largest_object_path: 'models/model.bin',
-        estimated_clone_min: 28,
-        growth_trend_percent: 42,
-      };
-    }
-
-    // For any other repository URL, deterministically derive metrics
-    const hash = this.stringToHash(urlOrPath);
-    const repoSizeMb = Math.round((1200 + (hash % 15000)) * 10) / 10;
-    const commitCount = 2000 + (hash % 45000);
-    const fileCount = 1500 + (hash % 35000);
-    const largeFileCount = 12 + (hash % 120);
+    fileEntries.sort((a, b) => b.size_mb - a.size_mb);
+    const largestObjects = fileEntries.slice(0, 10);
+    const countData = this.parseCountObjects(countObjectsResult.stdout);
+    const repoSizeMb = Math.round(((countData.size + countData['size-pack']) / 1024) * 10) / 10;
+    const objectCount = countData.count + countData['in-pack'];
+    const commitCount = Number.parseInt(commitResult.stdout.trim(), 10) || 0;
+    const branchCount = branchesResult.stdout.split('\n').filter(Boolean).length;
 
     return {
-      repo_size_mb: repoSizeMb,
-      commit_count: commitCount,
-      file_count: fileCount,
-      large_file_count: largeFileCount,
-      git_objects_count: Math.round(fileCount * 18.5),
-      largest_object_mb: Math.round((largeFileCount * 1.5) * 10) / 10,
-      largest_object_path: 'assets/bundle.bin',
-      estimated_clone_min: Math.max(2, Math.round(repoSizeMb / 1200)),
-      growth_trend_percent: 28 + (hash % 40),
+      metrics: {
+        repo_size_mb: repoSizeMb,
+        commit_count: commitCount,
+        file_count: files.length,
+        large_file_count: largeFileCount,
+        branch_count: branchCount,
+        git_objects_count: objectCount,
+        largest_object_mb: largestObjects[0]?.size_mb || 0,
+        largest_object_path: largestObjects[0]?.path || '',
+        estimated_clone_min: this.estimateCloneMinutes(repoSizeMb),
+        current_tree_blob_mb: this.bytesToMb(currentTreeBytes),
+      },
+      objectDistribution: {
+        blobs_mb: this.bytesToMb(currentTreeBytes),
+        trees_mb: 0,
+        commits_mb: 0,
+        tags_mb: 0,
+      },
+      largestObjects,
+      metricSource: 'git_cli',
+      metricNotes: [
+        'Repository object size and object count are measured with git count-objects -v.',
+        'File sizes and largest objects describe tracked files materialized in the current checkout.',
+        'Clone time remains an estimate; run the benchmark workflow for measured operation timing.',
+      ],
+      defaultBranch: branchResult.stdout.trim() || undefined,
+      treeTruncated: false,
     };
   }
 
-  private stringToHash(str: string): number {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      hash = (hash << 5) - hash + str.charCodeAt(i);
-      hash |= 0;
+  private buildTestMetrics(simulated: Partial<ExtractedMetrics>): CollectionResult {
+    const metrics: ExtractedMetrics = {
+      repo_size_mb: simulated.repo_size_mb ?? 0,
+      commit_count: simulated.commit_count ?? 0,
+      file_count: simulated.file_count ?? 0,
+      large_file_count: simulated.large_file_count ?? 0,
+      branch_count: simulated.branch_count ?? 0,
+      git_objects_count: simulated.git_objects_count ?? 0,
+      largest_object_mb: simulated.largest_object_mb ?? 0,
+      largest_object_path: simulated.largest_object_path ?? '',
+      estimated_clone_min: simulated.estimated_clone_min ?? 0,
+      current_tree_blob_mb: simulated.current_tree_blob_mb ?? 0,
+    };
+
+    return {
+      metrics,
+      objectDistribution: {
+        blobs_mb: metrics.current_tree_blob_mb || 0,
+        trees_mb: 0,
+        commits_mb: 0,
+        tags_mb: 0,
+      },
+      largestObjects: [],
+      metricSource: 'simulated',
+      metricNotes: ['Synthetic metrics supplied by an automated test.'],
+      treeTruncated: false,
+    };
+  }
+
+  private async persistMetrics(analysisId: string, metrics: ExtractedMetrics): Promise<MetricDTO[]> {
+    const metricEntries: Array<{ type: string; value: number | undefined; unit: string }> = [
+      { type: 'repo_size_mb', value: metrics.repo_size_mb, unit: 'MB' },
+      { type: 'commit_count', value: metrics.commit_count, unit: 'count' },
+      { type: 'file_count', value: metrics.file_count, unit: 'count' },
+      { type: 'large_file_count', value: metrics.large_file_count, unit: 'count' },
+      { type: 'branch_count', value: metrics.branch_count, unit: 'count' },
+      { type: 'git_objects_count', value: metrics.git_objects_count, unit: 'count' },
+      { type: 'largest_object_mb', value: metrics.largest_object_mb, unit: 'MB' },
+      { type: 'estimated_clone_min', value: metrics.estimated_clone_min, unit: 'minutes' },
+      { type: 'current_tree_blob_mb', value: metrics.current_tree_blob_mb, unit: 'MB' },
+    ];
+
+    const savedMetrics: MetricDTO[] = [];
+    for (const metric of metricEntries) {
+      if (metric.value === undefined || !Number.isFinite(metric.value)) continue;
+      const saved = await db.createMetric({
+        analysis_id: analysisId,
+        metric_type: metric.type,
+        metric_value: metric.value,
+        unit: metric.unit,
+      });
+      savedMetrics.push(saved);
     }
-    return Math.abs(hash);
+    return savedMetrics;
+  }
+
+  private calculateOpportunityScore(metrics: ExtractedMetrics): number {
+    let score = 10;
+
+    if (metrics.repo_size_mb >= 500) score += 10;
+    if (metrics.repo_size_mb >= 2_000) score += 10;
+    if (metrics.repo_size_mb >= 10_000) score += 10;
+
+    if (metrics.commit_count >= 5_000) score += 8;
+    if (metrics.commit_count >= 25_000) score += 8;
+    if (metrics.commit_count >= 100_000) score += 8;
+
+    if (metrics.file_count >= 5_000) score += 8;
+    if (metrics.file_count >= 20_000) score += 8;
+    if (metrics.file_count >= 75_000) score += 8;
+
+    if (metrics.large_file_count >= 10) score += 5;
+    if (metrics.large_file_count >= 100) score += 7;
+
+    return Math.min(100, score);
+  }
+
+  private parseCountObjects(output: string): Record<string, number> {
+    const result: Record<string, number> = {
+      count: 0,
+      size: 0,
+      'in-pack': 0,
+      'size-pack': 0,
+    };
+
+    for (const line of output.split('\n')) {
+      const [key, value] = line.trim().split(':').map((part) => part.trim());
+      if (key && value !== undefined && key in result) {
+        result[key] = Number.parseInt(value, 10) || 0;
+      }
+    }
+    return result;
+  }
+
+  private estimateCloneMinutes(repoSizeMb: number): number {
+    if (repoSizeMb <= 0) return 0;
+    const effectiveTransferMbPerSecond = 20;
+    return Math.round(Math.max(0.1, repoSizeMb / effectiveTransferMbPerSecond / 60) * 10) / 10;
+  }
+
+  private bytesToMb(bytes: number): number {
+    return Math.round((bytes / 1024 / 1024) * 10) / 10;
   }
 }
 
