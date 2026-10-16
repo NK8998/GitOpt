@@ -1,0 +1,6 @@
+{
+  "name": "GitOptima - Git Repository Performance Analytics & Optimization Platform",
+  "description": "Modular backend and developer analytics platform for Git repository performance benchmarking, workload profiling, and deterministic cloning optimization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
