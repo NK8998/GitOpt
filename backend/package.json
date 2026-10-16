@@ -1,7 +1,7 @@
 {
-  "name": "react-example",
+  "name": "gitopt-backend",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -9,7 +9,8 @@
     "start": "tsx server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "node --import tsx --test src/modules/recommendation/rules.engine.test.ts src/modules/analysis/githubMetrics.service.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
