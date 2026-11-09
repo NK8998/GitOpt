@@ -8,6 +8,7 @@ import OverviewPage from "./pages/Overview/OverviewPage"
 import ProgressPage from "./pages/Progress/ProgressPage"
 import RecommendationDetailPage from "./pages/Recommendations/RecommendationDetailPage"
 import RecommendationsPage from "./pages/Recommendations/RecommendationsPage"
+import ScalarDashboardPage from "./pages/Scalar/ScalarDashboardPage"
 
 export const router = createBrowserRouter([
   { path: "/", Component: HomePage },
@@ -21,6 +22,7 @@ export const router = createBrowserRouter([
       { path: "recommendations/:id", Component: RecommendationDetailPage },
       { path: "benchmarks", Component: BenchmarksPage },
       { path: "configuration", Component: ConfigurationPage },
+      { path: "scalar", Component: ScalarDashboardPage },
     ],
   },
   { path: "*", element: <Navigate to="/" replace /> },
