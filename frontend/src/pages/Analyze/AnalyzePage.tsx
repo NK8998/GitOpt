@@ -8,6 +8,11 @@ import {
   FolderGit2,
   Layers3,
   Loader2,
+  Rocket,
+} from "lucide-react"
+import { useNavigate } from "react-router"
+import Button from "../../components/common/Button"
+import { api, ScalarCapabilities, WorkloadProfile } from "../../api/client"
 } from "lucide-react"
 import { useNavigate } from "react-router"
 import Button from "../../components/common/Button"
@@ -21,8 +26,27 @@ export default function AnalyzePage() {
   const { setCurrentRepository } = useRepository()
   const [url, setUrl] = useState("")
   const [workload, setWorkload] = useState<Workload>("local")
+  const [ultraLargeMode, setUltraLargeMode] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [workloadProfiles, setWorkloadProfiles] = useState<WorkloadProfile[]>([])
+  const [scalarCapabilities, setScalarCapabilities] = useState<ScalarCapabilities | null>(null)
+
+  useEffect(() => {
+    Promise.allSettled([api.getWorkloads(), api.getScalarCapabilities()]).then((results) => {
+      const workloads = results[0]
+      const scalar = results[1]
+
+      if (workloads.status === "fulfilled") {
+        setWorkloadProfiles(workloads.value)
+      } else {
+        setError(workloads.reason instanceof Error ? workloads.reason.message : "Failed to load workload profiles")
+      }
+
+      if (scalar.status === "fulfilled") {
+        setScalarCapabilities(scalar.value)
+      }
+    })
   const [workloadProfiles, setWorkloadProfiles] = useState<WorkloadProfile[]>(
     [],
   )
@@ -59,6 +83,10 @@ export default function AnalyzePage() {
         )
       }
 
+      if (ultraLargeMode && !scalarCapabilities?.supported) {
+        throw new Error("Ultra-Large Repository Mode is not available on this GitOpt backend host.")
+      }
+
       const slugMap: Record<Workload, WorkloadProfile["slug"]> = {
         local: "local_dev",
         cicd: "ci_cd",
@@ -80,6 +108,13 @@ export default function AnalyzePage() {
 
       setCurrentRepository(repo)
       const analysis = await api.startAnalysis({ repository_id: repo.id })
+
+      if (ultraLargeMode) {
+        const enlistment = await api.createScalarEnlistment(repo.id)
+        navigate(`/scalar?id=${enlistment.id}&analysisId=${analysis.id}`)
+        return
+      }
+
       navigate(`/progress?id=${analysis.id}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start analysis")
@@ -107,6 +142,8 @@ export default function AnalyzePage() {
       "Multiple projects and teams working in different areas.",
     ],
   ] as const
+
+  const scalarAvailable = scalarCapabilities?.supported === true
 
   return (
     <div className="page narrow-page">
@@ -197,7 +234,54 @@ export default function AnalyzePage() {
         <div className="setup-section">
           <div className="section-number">03</div>
           <div className="setup-content">
+            <h2>Ultra-Large Repository Mode</h2>
+            <p>Use Scalar to create a managed partial-clone workspace on the GitOpt backend for very large repositories and monorepos.</p>
+
+            <button
+              type="button"
+              onClick={() => scalarAvailable && setUltraLargeMode((value) => !value)}
+              disabled={loading || !scalarAvailable}
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                gap: 14,
+                padding: 16,
+                borderRadius: 10,
+                border: ultraLargeMode ? "1px solid #60a5fa" : "1px solid var(--border)",
+                background: ultraLargeMode ? "rgba(96,165,250,0.08)" : "transparent",
+                color: "var(--text-bright)",
+                textAlign: "left",
+                cursor: scalarAvailable ? "pointer" : "not-allowed",
+                opacity: scalarAvailable ? 1 : 0.6,
+              }}
+            >
+              <Rocket size={20} />
+              <span style={{ flex: 1 }}>
+                <strong style={{ display: "block", marginBottom: 4 }}>Ultra-Large Repo Mode (Scalar)</strong>
+                <small style={{ color: "var(--text-muted)" }}>
+                  {scalarAvailable
+                    ? "Uses Scalar partial-clone/sparse-checkout defaults, starts with maintenance disabled when supported, and enables explicit maintenance and MIDX optimization from the dashboard."
+                    : "Unavailable because this backend host does not currently expose the required Git Scalar capabilities."}
+                </small>
+              </span>
+              <span style={{ fontWeight: 700 }}>{ultraLargeMode ? "ON" : "OFF"}</span>
+            </button>
+
+            {scalarCapabilities && !scalarCapabilities.clone_options.no_prefetch && (
+              <small className="field-help" style={{ marginTop: 10 }}>
+                GitOpt detected that this Scalar version does not advertise <code>--no-prefetch</code>; it will use the supported Scalar partial-clone behavior instead.
+              </small>
+            )}
+          </div>
+        </div>
+
+        <div className="setup-divider" />
+        <div className="setup-section">
+          <div className="section-number">04</div>
+          <div className="setup-content">
             <h2>Analysis scope</h2>
+            <p>GitOpt collects repository metadata, commit depth, branches, default-branch tree evidence and large-file information. Scalar mode additionally manages a server-side optimized workspace; it does not modify a repository on your personal computer.</p>
             <p>
               GitOpt currently collects repository metadata, commit depth,
               branches, the default-branch tree, large files, and
@@ -209,6 +293,9 @@ export default function AnalyzePage() {
         </div>
 
         <div className="setup-footer">
+          <span><CheckCircle2 size={14} /> Remote analysis remains read-only. Scalar mode creates a separate managed backend workspace.</span>
+          <Button type="submit" disabled={loading || workloadProfiles.length === 0}>
+            {loading ? <><Loader2 size={15} className="animate-spin" /> Starting...</> : <>Start {ultraLargeMode ? "analysis + Scalar" : "analysis"} <ArrowRight size={15} /></>}
           <span>
             <CheckCircle2 size={14} /> Read-only analysis. GitOpt never modifies
             your repository.

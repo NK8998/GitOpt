@@ -5,12 +5,17 @@ import { createApp } from './src/app';
 import { env } from './src/config/env';
 import { db, pgPool } from './src/config/database';
 import { runMigrations } from './src/config/migrate';
+import { scalarService } from './src/modules/scalar/scalar.service';
 
 async function startServer() {
   // Bring PostgreSQL to the schema expected by the current application before
   // services begin reading or seeding reference data.
   await runMigrations();
   await db.init();
+  const interruptedScalarOperations = await scalarService.reconcileInterruptedOperations();
+  if (interruptedScalarOperations > 0) {
+    console.warn(`⚠ Reconciled ${interruptedScalarOperations} interrupted Scalar operation(s).`);
+  }
 
   const app = createApp();
   const port = env.PORT || 3000;

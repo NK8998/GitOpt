@@ -9,16 +9,15 @@ import repositoryRoutes from './modules/repository/repository.routes';
 import analysisRoutes from './modules/analysis/analysis.routes';
 import recommendationRoutes from './modules/recommendation/recommendation.routes';
 import benchmarkRoutes from './modules/benchmark/benchmark.routes';
+import scalarRoutes from './modules/scalar/scalar.routes';
 
 export function createApp(): Application {
   const app = express();
 
-  // Middleware
   app.use(cors());
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
-  // System Health & Diagnostics API
   app.get('/api/health', (req: Request, res: Response) => {
     res.status(200).json({
       status: 'ok',
@@ -30,24 +29,24 @@ export function createApp(): Application {
 
   app.get('/api/v1/stats', async (req: Request, res: Response) => {
     await db.init();
+    const databaseStats = await db.getTableStats();
     res.status(200).json({
       status: 'success',
       data: {
-        database_stats: db.getTableStats(),
+        database_stats: databaseStats,
         uptime_seconds: Math.floor(process.uptime()),
       },
     });
   });
 
-  // REST API Modules Scope
   app.use('/api/v1/auth', authRoutes);
   app.use('/api/v1/workloads', workloadRoutes);
   app.use('/api/v1/repositories', repositoryRoutes);
   app.use('/api/v1/analyses', analysisRoutes);
   app.use('/api/v1/recommendations', recommendationRoutes);
   app.use('/api/v1/benchmarks', benchmarkRoutes);
+  app.use('/api/v1/scalar', scalarRoutes);
 
-  // Global Error Handler
   app.use(errorHandler);
 
   return app;
