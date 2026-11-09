@@ -90,6 +90,79 @@ export interface RecommendationItem {
   templates: TemplateItem[];
 }
 
+
+export interface ScalarCapabilities {
+  supported: boolean;
+  checked_at: string;
+  git: {
+    available: boolean;
+    version: string | null;
+    raw_version: string | null;
+  };
+  scalar: {
+    executable_available: boolean;
+    available: boolean;
+    implementation: 'git-scalar' | 'unknown' | 'missing';
+    version: string | null;
+    raw_version: string | null;
+  };
+  commands: {
+    scalar_clone: boolean;
+    scalar_list: boolean;
+    scalar_register: boolean;
+    scalar_run: boolean;
+    git_maintenance: boolean;
+    git_multi_pack_index: boolean;
+    git_sparse_checkout: boolean;
+  };
+  clone_options: {
+    no_maintenance: boolean;
+    no_prefetch: boolean;
+    no_src: boolean;
+  };
+  features: {
+    scalar_partial_clone_defaults: boolean;
+    scalar_sparse_checkout_defaults: boolean;
+    fsmonitor_verification: 'requires_repository';
+  };
+  warnings: string[];
+}
+
+export interface ScalarOperationItem {
+  id: string;
+  enlistment_id: string;
+  operation_type: 'clone' | 'maintenance_start' | 'midx_write' | 'midx_verify';
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  started_at: string | null;
+  completed_at: string | null;
+  exit_code: number | null;
+  output: string | null;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface ScalarEnlistmentItem {
+  id: string;
+  repository_id: string;
+  user_id: string;
+  workspace_path: string;
+  worktree_path: string | null;
+  clone_mode: string;
+  status: 'pending' | 'cloning' | 'ready' | 'optimizing' | 'optimized' | 'failed';
+  scalar_version: string | null;
+  git_version: string | null;
+  maintenance_enabled: boolean;
+  midx_written: boolean;
+  midx_verified: boolean;
+  fsmonitor_enabled: boolean | null;
+  partial_clone_enabled: boolean | null;
+  sparse_checkout_enabled: boolean | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  operations: ScalarOperationItem[];
+}
+
 export interface BenchmarkStrategy {
   strategy: string;
   time: string;
@@ -191,6 +264,37 @@ export const api = {
 
   getBenchmarks: async (analysisId: string): Promise<BenchmarkComparison> => {
     return request<BenchmarkComparison>(`/api/v1/analyses/${analysisId}/benchmarks`);
+  },
+
+  getScalarCapabilities: async (): Promise<ScalarCapabilities> => {
+    return request<ScalarCapabilities>('/api/v1/scalar/capabilities');
+  },
+
+  createScalarEnlistment: async (repositoryId: string): Promise<ScalarEnlistmentItem> => {
+    return request<ScalarEnlistmentItem>('/api/v1/scalar/enlistments', {
+      method: 'POST',
+      body: JSON.stringify({ repository_id: repositoryId }),
+    });
+  },
+
+  getScalarEnlistment: async (id: string): Promise<ScalarEnlistmentItem> => {
+    return request<ScalarEnlistmentItem>(`/api/v1/scalar/enlistments/${id}`);
+  },
+
+  getRepositoryScalarEnlistments: async (repositoryId: string): Promise<ScalarEnlistmentItem[]> => {
+    return request<ScalarEnlistmentItem[]>(`/api/v1/scalar/repositories/${repositoryId}/enlistments`);
+  },
+
+  startScalarMaintenance: async (id: string): Promise<ScalarOperationItem> => {
+    return request<ScalarOperationItem>(`/api/v1/scalar/enlistments/${id}/maintenance`, {
+      method: 'POST',
+    });
+  },
+
+  optimizeScalarMidx: async (id: string): Promise<ScalarOperationItem> => {
+    return request<ScalarOperationItem>(`/api/v1/scalar/enlistments/${id}/midx`, {
+      method: 'POST',
+    });
   },
 
   runBenchmarks: async (analysisId: string): Promise<BenchmarkComparison> => {
