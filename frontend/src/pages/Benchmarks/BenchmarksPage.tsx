@@ -1,68 +1,68 @@
-import { useEffect, useState } from "react"
-import { ArrowRight, RefreshCw, Terminal, Zap } from "lucide-react"
-import { useNavigate, useSearchParams } from "react-router"
-import Button from "../../components/common/Button"
-import { api, AnalysisItem, BenchmarkComparison } from "../../api/client"
+import { useEffect, useState } from "react";
+import { ArrowRight, RefreshCw, Terminal, Zap } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router";
+import Button from "../../components/common/Button";
+import { api, AnalysisItem, BenchmarkComparison } from "../../api/client";
 
 export default function BenchmarksPage() {
-  const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const requestedAnalysisId = searchParams.get("id") || ""
-  const [analysis, setAnalysis] = useState<AnalysisItem | null>(null)
-  const [benchmarks, setBenchmarks] = useState<BenchmarkComparison | null>(null)
-  const [running, setRunning] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedAnalysisId = searchParams.get("id") || "";
+  const [analysis, setAnalysis] = useState<AnalysisItem | null>(null);
+  const [benchmarks, setBenchmarks] = useState<BenchmarkComparison | null>(null);
+  const [running, setRunning] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadData() {
-      setLoading(true)
-      setError(null)
+      setLoading(true);
+      setError(null);
       try {
-        let currentId = requestedAnalysisId
+        let currentId = requestedAnalysisId;
         if (!currentId) {
-          const all = await api.getAllAnalyses()
-          currentId = all[0]?.id || ""
+          const all = await api.getAllAnalyses();
+          currentId = all[0]?.id || "";
         }
-        if (!currentId) throw new Error("Run a repository analysis before comparing strategies.")
+        if (!currentId) throw new Error("Run a repository analysis before comparing strategies.");
 
         const [ana, bench] = await Promise.all([
           api.getAnalysis(currentId),
           api.getBenchmarks(currentId),
-        ])
-        setAnalysis(ana)
-        setBenchmarks(bench)
+        ]);
+        setAnalysis(ana);
+        setBenchmarks(bench);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load strategy estimates")
+        setError(err instanceof Error ? err.message : "Failed to load strategy estimates");
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
     }
-    loadData()
-  }, [requestedAnalysisId])
+    loadData();
+  }, [requestedAnalysisId]);
 
   const handleRecalculate = async () => {
-    if (!analysis?.id) return
-    setRunning(true)
+    if (!analysis?.id) return;
+    setRunning(true);
     try {
-      setBenchmarks(await api.runBenchmarks(analysis.id))
+      setBenchmarks(await api.runBenchmarks(analysis.id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to recalculate estimates")
+      setError(err instanceof Error ? err.message : "Failed to recalculate estimates");
     } finally {
-      setRunning(false)
+      setRunning(false);
     }
-  }
+  };
 
-  if (loading) return <div className="page"><div className="page-heading"><h1>Loading strategy comparison…</h1></div></div>
+  if (loading) return <div className="page"><div className="page-heading"><h1>Loading strategy comparison…</h1></div></div>;
   if (error || !analysis || !benchmarks) {
-    return <div className="page"><div className="page-heading"><h1>Strategy comparison unavailable</h1><p>{error || "No benchmark estimate was returned."}</p></div></div>
+    return <div className="page"><div className="page-heading"><h1>Strategy comparison unavailable</h1><p>{error || "No benchmark estimate was returned."}</p></div></div>;
   }
 
-  const repoName = analysis.repository?.name || "Repository"
-  const workloadName = analysis.repository?.workload?.name || "selected"
-  const currentIdParam = `?id=${analysis.id}`
-  const strategies = benchmarks.strategies
-  const chartSeries = benchmarks.chart_series
+  const repoName = analysis.repository?.name || "Repository";
+  const workloadName = analysis.repository?.workload?.name || "selected";
+  const currentIdParam = `?id=${analysis.id}`;
+  const strategies = benchmarks.strategies;
+  const chartSeries = benchmarks.chart_series;
 
   return (
     <div className="page">
@@ -119,14 +119,14 @@ export default function BenchmarksPage() {
             <div className="panel-heading"><div><span>{String(title)}</span><small>{String(unit)}</small></div></div>
             <div className="vertical-bars">
               {(values as number[]).map((value, index) => {
-                const max = Math.max(...(values as number[]), 1)
+                const max = Math.max(...(values as number[]), 1);
                 return (
                   <div key={index}>
                     <span>{value}</span>
                     <i style={{ height: `${(value / max) * 100}%` }} className={strategies[index]?.is_best ? "best-bar" : ""} />
                     <small>{chartSeries.labels[index]}</small>
                   </div>
-                )
+                );
               })}
             </div>
           </section>
@@ -138,5 +138,5 @@ export default function BenchmarksPage() {
         <Button onClick={() => navigate(`/configuration${currentIdParam}`)}>View configuration <ArrowRight size={15} /></Button>
       </div>
     </div>
-  )
+  );
 }

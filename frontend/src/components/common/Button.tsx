@@ -1,9 +1,9 @@
-import { ReactNode } from "react"
+import { ReactNode } from "react";
 
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  children: ReactNode
-  variant?: "primary" | "secondary" | "ghost"
-}
+  children: ReactNode;
+  variant?: "primary" | "secondary" | "ghost";
+};
 
 export default function Button({
   children,
@@ -15,5 +15,5 @@ export default function Button({
     <button className={`button button-${variant} ${className}`} {...props}>
       {children}
     </button>
-  )
+  );
 }

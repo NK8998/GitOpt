@@ -7,14 +7,14 @@ import {
   Search,
   SlidersHorizontal,
   Zap,
-} from "lucide-react"
-import { useNavigate } from "react-router"
-import Brand from "../../components/common/Brand"
-import Button from "../../components/common/Button"
+} from "lucide-react";
+import { useNavigate } from "react-router";
+import Brand from "../../components/common/Brand";
+import Button from "../../components/common/Button";
 
 export default function HomePage() {
-  const navigate = useNavigate()
-  const onAnalyze = () => navigate("/analyze")
+  const navigate = useNavigate();
+  const onAnalyze = () => navigate("/analyze");
   return (
     <div className="landing">
       <header className="landing-nav">
@@ -189,7 +189,7 @@ export default function HomePage() {
                 "Apply the right Git mechanism with a ready-to-run command.",
               ],
             ].map(([Icon, number, title, text]) => {
-              const CardIcon = Icon as typeof Database
+              const CardIcon = Icon as typeof Database;
               return (
                 <article key={String(number)}>
                   <div className="feature-top">
@@ -199,7 +199,7 @@ export default function HomePage() {
                   <h3>{String(title)}</h3>
                   <p>{String(text)}</p>
                 </article>
-              )
+              );
             })}
           </div>
         </section>
@@ -220,5 +220,5 @@ export default function HomePage() {
         <small>GitOpt MVP · 2026</small>
       </footer>
     </div>
-  )
+  );
 }

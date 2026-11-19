@@ -5,7 +5,7 @@ import {
   FileArchive,
   FileCode2,
   GitBranch,
-} from "lucide-react"
+} from "lucide-react";
 
 export const metrics = [
   {
@@ -44,7 +44,7 @@ export const metrics = [
     hint: "Full clone on 200 Mbps",
     Icon: Clock3,
   },
-]
+];
 
 export const recommendations = [
   {
@@ -82,7 +82,7 @@ export const recommendations = [
     metric: "Commits in CI",
     command: "git clone --depth=1 \\\n  https://github.com/microsoft/git.git",
   },
-]
+];
 
 export const benchmarkRows = [
   {
@@ -114,4 +114,4 @@ export const benchmarkRows = [
     width: 24,
     best: true,
   },
-]
+];

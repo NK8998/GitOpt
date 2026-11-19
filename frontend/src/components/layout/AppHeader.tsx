@@ -1,11 +1,11 @@
-import { ChevronRight, Menu, Moon } from "lucide-react"
+import { ChevronRight, Menu, Moon } from "lucide-react";
 
 export default function AppHeader({
   title,
   onMenu,
 }: {
-  title: string
-  onMenu: () => void
+  title: string;
+  onMenu: () => void;
 }) {
   return (
     <header className="app-header">
@@ -26,5 +26,5 @@ export default function AppHeader({
         </button>
       </div>
     </header>
-  )
+  );
 }

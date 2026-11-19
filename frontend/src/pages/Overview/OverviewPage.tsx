@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
   Box,
@@ -11,58 +11,58 @@ import {
   GitBranch,
   RefreshCw,
   ShieldCheck,
-} from "lucide-react"
-import { useNavigate, useSearchParams } from "react-router"
-import Button from "../../components/common/Button"
-import { api, AnalysisItem, RecommendationItem } from "../../api/client"
+} from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router";
+import Button from "../../components/common/Button";
+import { api, AnalysisItem, RecommendationItem } from "../../api/client";
 
 function formatMetric(type: string, value: number) {
   if (["repo_size_mb", "largest_object_mb", "current_tree_blob_mb"].includes(type)) {
-    return value >= 1024 ? `${(value / 1024).toFixed(1)} GB` : `${value.toFixed(1)} MB`
+    return value >= 1024 ? `${(value / 1024).toFixed(1)} GB` : `${value.toFixed(1)} MB`;
   }
-  if (type === "estimated_clone_min") return `${value.toFixed(1)} min`
-  return value.toLocaleString()
+  if (type === "estimated_clone_min") return `${value.toFixed(1)} min`;
+  return value.toLocaleString();
 }
 
 export default function OverviewPage() {
-  const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const requestedAnalysisId = searchParams.get("id") || ""
-  const [analysis, setAnalysis] = useState<AnalysisItem | null>(null)
-  const [recommendations, setRecommendations] = useState<RecommendationItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedAnalysisId = searchParams.get("id") || "";
+  const [analysis, setAnalysis] = useState<AnalysisItem | null>(null);
+  const [recommendations, setRecommendations] = useState<RecommendationItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadData() {
-      setLoading(true)
-      setError(null)
+      setLoading(true);
+      setError(null);
       try {
-        let currentId = requestedAnalysisId
+        let currentId = requestedAnalysisId;
         if (!currentId) {
-          const all = await api.getAllAnalyses()
-          currentId = all[0]?.id || ""
+          const all = await api.getAllAnalyses();
+          currentId = all[0]?.id || "";
         }
-        if (!currentId) throw new Error("No repository analysis exists yet.")
+        if (!currentId) throw new Error("No repository analysis exists yet.");
 
         const [ana, recs] = await Promise.all([
           api.getAnalysis(currentId),
           api.getRecommendations(currentId),
-        ])
-        setAnalysis(ana)
-        setRecommendations(recs)
+        ]);
+        setAnalysis(ana);
+        setRecommendations(recs);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load repository analysis")
+        setError(err instanceof Error ? err.message : "Failed to load repository analysis");
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
     }
-    loadData()
-  }, [requestedAnalysisId])
+    loadData();
+  }, [requestedAnalysisId]);
 
   const metricMap = useMemo(() => {
-    return new Map((analysis?.metrics || []).map((metric) => [metric.metric_type, metric]))
-  }, [analysis])
+    return new Map((analysis?.metrics || []).map((metric) => [metric.metric_type, metric]));
+  }, [analysis]);
 
   const metricsGrid = [
     { type: "repo_size_mb", label: "Repository size", hint: "GitHub-reported object database size / local Git object size", Icon: Database },
@@ -71,10 +71,10 @@ export default function OverviewPage() {
     { type: "file_count", label: "Files", hint: "Tracked files in the current/default tree", Icon: FileCode2 },
     { type: "largest_object_mb", label: "Largest current file", hint: analysis?.largest_objects?.[0]?.path || "No current-tree object found", Icon: FileArchive },
     { type: "estimated_clone_min", label: "Estimated clone", hint: "Modelled estimate — not a benchmark measurement", Icon: Clock3 },
-  ]
+  ];
 
   if (loading) {
-    return <div className="page"><div className="page-heading"><h1>Loading repository analysis…</h1></div></div>
+    return <div className="page"><div className="page-heading"><h1>Loading repository analysis…</h1></div></div>;
   }
 
   if (error || !analysis) {
@@ -83,14 +83,14 @@ export default function OverviewPage() {
         <div className="page-heading"><h1>Analysis unavailable</h1><p>{error || "No analysis data was returned."}</p></div>
         <Button onClick={() => navigate("/analyze")}>Analyze a repository</Button>
       </div>
-    )
+    );
   }
 
-  const repoName = analysis.repository?.name || "Repository"
-  const workloadName = analysis.repository?.workload?.name || "Unknown workload"
-  const score = analysis.optimization_score ?? 0
-  const currentIdParam = `?id=${analysis.id}`
-  const measuredBlobMb = analysis.object_distribution?.blobs_mb || 0
+  const repoName = analysis.repository?.name || "Repository";
+  const workloadName = analysis.repository?.workload?.name || "Unknown workload";
+  const score = analysis.optimization_score ?? 0;
+  const currentIdParam = `?id=${analysis.id}`;
+  const measuredBlobMb = analysis.object_distribution?.blobs_mb || 0;
 
   return (
     <div className="page">
@@ -124,14 +124,14 @@ export default function OverviewPage() {
 
       <div className="metrics-grid">
         {metricsGrid.map(({ type, label, hint, Icon }) => {
-          const metric = metricMap.get(type)
+          const metric = metricMap.get(type);
           return (
             <article className="metric-card" key={type}>
               <div><span>{label}</span><Icon size={15} /></div>
               <strong>{metric ? formatMetric(type, metric.metric_value) : "—"}</strong>
               <small>{hint}</small>
             </article>
-          )
+          );
         })}
       </div>
 
@@ -195,5 +195,5 @@ export default function OverviewPage() {
         )) : <div style={{ padding: 20 }}>No optimization rules matched this repository/workload combination.</div>}
       </section>
     </div>
-  )
+  );
 }

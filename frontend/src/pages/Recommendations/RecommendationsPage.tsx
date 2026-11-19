@@ -1,63 +1,63 @@
-import { useEffect, useState } from "react"
-import { ArrowRight, BarChart3, CheckCircle2, ChevronRight, Terminal } from "lucide-react"
-import { useNavigate, useSearchParams } from "react-router"
-import Button from "../../components/common/Button"
-import CopyButton from "../../components/common/CopyButton"
-import { api, AnalysisItem, RecommendationItem } from "../../api/client"
+import { useEffect, useState } from "react";
+import { ArrowRight, BarChart3, CheckCircle2, ChevronRight, Terminal } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router";
+import Button from "../../components/common/Button";
+import CopyButton from "../../components/common/CopyButton";
+import { api, AnalysisItem, RecommendationItem } from "../../api/client";
 
 function formatRepositorySize(analysis: AnalysisItem | null) {
-  const metric = analysis?.metrics?.find((item) => item.metric_type === "repo_size_mb")
-  if (!metric) return "Repository size unavailable"
+  const metric = analysis?.metrics?.find((item) => item.metric_type === "repo_size_mb");
+  if (!metric) return "Repository size unavailable";
   return metric.metric_value >= 1024
     ? `${(metric.metric_value / 1024).toFixed(1)} GB repository`
-    : `${metric.metric_value.toFixed(1)} MB repository`
+    : `${metric.metric_value.toFixed(1)} MB repository`;
 }
 
 export default function RecommendationsPage() {
-  const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const requestedAnalysisId = searchParams.get("id") || ""
-  const [analysis, setAnalysis] = useState<AnalysisItem | null>(null)
-  const [items, setItems] = useState<RecommendationItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedAnalysisId = searchParams.get("id") || "";
+  const [analysis, setAnalysis] = useState<AnalysisItem | null>(null);
+  const [items, setItems] = useState<RecommendationItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadData() {
-      setLoading(true)
-      setError(null)
+      setLoading(true);
+      setError(null);
       try {
-        let currentId = requestedAnalysisId
+        let currentId = requestedAnalysisId;
         if (!currentId) {
-          const all = await api.getAllAnalyses()
-          currentId = all[0]?.id || ""
+          const all = await api.getAllAnalyses();
+          currentId = all[0]?.id || "";
         }
-        if (!currentId) throw new Error("No repository analysis exists yet.")
+        if (!currentId) throw new Error("No repository analysis exists yet.");
 
         const [ana, recs] = await Promise.all([
           api.getAnalysis(currentId),
           api.getRecommendations(currentId),
-        ])
-        setAnalysis(ana)
-        setItems(recs)
+        ]);
+        setAnalysis(ana);
+        setItems(recs);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load recommendations")
+        setError(err instanceof Error ? err.message : "Failed to load recommendations");
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
     }
-    loadData()
-  }, [requestedAnalysisId])
+    loadData();
+  }, [requestedAnalysisId]);
 
-  if (loading) return <div className="page"><div className="page-heading"><h1>Loading recommendations…</h1></div></div>
+  if (loading) return <div className="page"><div className="page-heading"><h1>Loading recommendations…</h1></div></div>;
   if (error || !analysis) {
-    return <div className="page"><div className="page-heading"><h1>Recommendations unavailable</h1><p>{error || "No analysis was returned."}</p></div></div>
+    return <div className="page"><div className="page-heading"><h1>Recommendations unavailable</h1><p>{error || "No analysis was returned."}</p></div></div>;
   }
 
-  const workloadName = analysis.repository?.workload?.name || "Unknown workload"
-  const shortId = analysis.id.slice(0, 8).toUpperCase()
-  const currentIdParam = `?id=${analysis.id}`
-  const bestFit = items[0]?.title || "No rule matched"
+  const workloadName = analysis.repository?.workload?.name || "Unknown workload";
+  const shortId = analysis.id.slice(0, 8).toUpperCase();
+  const currentIdParam = `?id=${analysis.id}`;
+  const bestFit = items[0]?.title || "No rule matched";
 
   return (
     <div className="page">
@@ -91,9 +91,9 @@ export default function RecommendationsPage() {
             <p>GitOpt did not find enough evidence to recommend one of the currently supported strategies for this repository and workload. This is preferable to recommending an optimization without evidence.</p>
           </section>
         ) : items.map((item, index) => {
-          const numberStr = (index + 1).toString().padStart(2, "0")
-          const commandText = item.templates?.[0]?.content
-          const impact = item.impact_estimate
+          const numberStr = (index + 1).toString().padStart(2, "0");
+          const commandText = item.templates?.[0]?.content;
+          const impact = item.impact_estimate;
 
           return (
             <article className="recommendation-card" key={item.recommendation_id}>
@@ -132,7 +132,7 @@ export default function RecommendationsPage() {
                 </div>
               </div>
             </article>
-          )
+          );
         })}
       </div>
 
@@ -144,5 +144,5 @@ export default function RecommendationsPage() {
         </div>
       </div>
     </div>
-  )
+  );
 }

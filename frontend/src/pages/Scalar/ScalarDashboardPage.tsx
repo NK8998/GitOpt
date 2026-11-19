@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -10,93 +10,93 @@ import {
   ServerCog,
   ShieldCheck,
   Wrench,
-} from "lucide-react"
-import { useNavigate, useSearchParams } from "react-router"
-import Button from "../../components/common/Button"
-import { api, ScalarEnlistmentItem } from "../../api/client"
+} from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router";
+import Button from "../../components/common/Button";
+import { api, ScalarEnlistmentItem } from "../../api/client";
 
 function boolLabel(value: boolean | null) {
-  if (value === null) return "Unknown"
-  return value ? "Enabled" : "Disabled"
+  if (value === null) return "Unknown";
+  return value ? "Enabled" : "Disabled";
 }
 
 export default function ScalarDashboardPage() {
-  const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const enlistmentId = searchParams.get("id") || ""
-  const analysisId = searchParams.get("analysisId") || ""
-  const [item, setItem] = useState<ScalarEnlistmentItem | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [action, setAction] = useState<"maintenance" | "midx" | null>(null)
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const enlistmentId = searchParams.get("id") || "";
+  const analysisId = searchParams.get("analysisId") || "";
+  const [item, setItem] = useState<ScalarEnlistmentItem | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [action, setAction] = useState<"maintenance" | "midx" | null>(null);
 
   const load = async () => {
     if (!enlistmentId) {
-      setError("No Scalar enlistment ID was supplied.")
-      return
+      setError("No Scalar enlistment ID was supplied.");
+      return;
     }
     try {
-      const result = await api.getScalarEnlistment(enlistmentId)
-      setItem(result)
-      setError(null)
+      const result = await api.getScalarEnlistment(enlistmentId);
+      setItem(result);
+      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load Scalar enlistment")
+      setError(err instanceof Error ? err.message : "Failed to load Scalar enlistment");
     }
-  }
+  };
 
   useEffect(() => {
-    void load()
-  }, [enlistmentId])
+    void load();
+  }, [enlistmentId]);
 
   const hasActiveOperation = useMemo(
     () => item?.operations.some((operation) => operation.status === "pending" || operation.status === "running") ?? false,
     [item]
-  )
+  );
 
   useEffect(() => {
-    if (!item || (!hasActiveOperation && !["pending", "cloning", "optimizing"].includes(item.status))) return
-    const timer = window.setInterval(() => void load(), 1500)
-    return () => window.clearInterval(timer)
-  }, [item?.status, hasActiveOperation, enlistmentId])
+    if (!item || (!hasActiveOperation && !["pending", "cloning", "optimizing"].includes(item.status))) return;
+    const timer = window.setInterval(() => void load(), 1500);
+    return () => window.clearInterval(timer);
+  }, [item?.status, hasActiveOperation, enlistmentId]);
 
   const startMaintenance = async () => {
-    if (!item) return
-    setAction("maintenance")
-    setError(null)
+    if (!item) return;
+    setAction("maintenance");
+    setError(null);
     try {
-      await api.startScalarMaintenance(item.id)
-      await load()
+      await api.startScalarMaintenance(item.id);
+      await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start maintenance")
+      setError(err instanceof Error ? err.message : "Failed to start maintenance");
     } finally {
-      setAction(null)
+      setAction(null);
     }
-  }
+  };
 
   const optimize = async () => {
-    if (!item) return
-    setAction("midx")
-    setError(null)
+    if (!item) return;
+    setAction("midx");
+    setError(null);
     try {
-      await api.optimizeScalarMidx(item.id)
-      await load()
+      await api.optimizeScalarMidx(item.id);
+      await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start MIDX optimization")
+      setError(err instanceof Error ? err.message : "Failed to start MIDX optimization");
     } finally {
-      setAction(null)
+      setAction(null);
     }
-  }
+  };
 
   if (!item && !error) {
-    return <div className="page"><div className="page-heading"><h1>Loading Scalar workspace…</h1></div></div>
+    return <div className="page"><div className="page-heading"><h1>Loading Scalar workspace…</h1></div></div>;
   }
 
   if (!item) {
-    return <div className="page"><div className="page-heading"><h1>Scalar workspace unavailable</h1><p>{error}</p></div></div>
+    return <div className="page"><div className="page-heading"><h1>Scalar workspace unavailable</h1><p>{error}</p></div></div>;
   }
 
-  const ready = ["ready", "optimized"].includes(item.status)
-  const cloning = ["pending", "cloning"].includes(item.status)
-  const failed = item.status === "failed"
+  const ready = ["ready", "optimized"].includes(item.status);
+  const cloning = ["pending", "cloning"].includes(item.status);
+  const failed = item.status === "failed";
 
   return (
     <div className="page">
@@ -153,14 +153,14 @@ export default function ScalarDashboardPage() {
           ["FSMonitor", boolLabel(item.fsmonitor_enabled), ShieldCheck],
           ["MIDX", item.midx_verified ? "Verified" : item.midx_written ? "Written" : "Not optimized", Wrench],
         ].map(([label, value, Icon]) => {
-          const IconComponent = Icon as typeof GitBranch
+          const IconComponent = Icon as typeof GitBranch;
           return (
             <section className="panel" key={String(label)} style={{ padding: 18 }}>
               <IconComponent size={18} />
               <small style={{ display: "block", color: "var(--text-muted)", marginTop: 12 }}>{label}</small>
               <strong style={{ display: "block", marginTop: 5, textTransform: label === "Workspace" ? "capitalize" : undefined }}>{String(value)}</strong>
             </section>
-          )
+          );
         })}
       </div>
 
@@ -213,5 +213,5 @@ export default function ScalarDashboardPage() {
         This workspace exists on the GitOpt backend host. It does not create or modify a checkout on your personal computer.
       </p>
     </div>
-  )
+  );
 }

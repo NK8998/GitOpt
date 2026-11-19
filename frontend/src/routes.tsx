@@ -1,14 +1,14 @@
-import { Navigate, createBrowserRouter } from "react-router"
-import MainLayout from "./components/layout/MainLayout"
-import AnalyzePage from "./pages/Analyze/AnalyzePage"
-import BenchmarksPage from "./pages/Benchmarks/BenchmarksPage"
-import ConfigurationPage from "./pages/Configuration/ConfigurationPage"
-import HomePage from "./pages/Home/HomePage"
-import OverviewPage from "./pages/Overview/OverviewPage"
-import ProgressPage from "./pages/Progress/ProgressPage"
-import RecommendationDetailPage from "./pages/Recommendations/RecommendationDetailPage"
-import RecommendationsPage from "./pages/Recommendations/RecommendationsPage"
-import ScalarDashboardPage from "./pages/Scalar/ScalarDashboardPage"
+import { Navigate, createBrowserRouter } from "react-router";
+import MainLayout from "./components/layout/MainLayout";
+import AnalyzePage from "./pages/Analyze/AnalyzePage";
+import BenchmarksPage from "./pages/Benchmarks/BenchmarksPage";
+import ConfigurationPage from "./pages/Configuration/ConfigurationPage";
+import HomePage from "./pages/Home/HomePage";
+import OverviewPage from "./pages/Overview/OverviewPage";
+import ProgressPage from "./pages/Progress/ProgressPage";
+import RecommendationDetailPage from "./pages/Recommendations/RecommendationDetailPage";
+import RecommendationsPage from "./pages/Recommendations/RecommendationsPage";
+import ScalarDashboardPage from "./pages/Scalar/ScalarDashboardPage";
 
 export const router = createBrowserRouter([
   { path: "/", Component: HomePage },
@@ -26,4 +26,4 @@ export const router = createBrowserRouter([
     ],
   },
   { path: "*", element: <Navigate to="/" replace /> },
-])
+]);

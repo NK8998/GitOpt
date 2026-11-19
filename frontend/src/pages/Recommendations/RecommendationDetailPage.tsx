@@ -1,54 +1,54 @@
-import { useEffect, useState } from "react"
-import { ArrowLeft, ArrowRight, CheckCircle2, ShieldAlert, Terminal } from "lucide-react"
-import { useNavigate, useParams, useSearchParams } from "react-router"
-import Button from "../../components/common/Button"
-import CopyButton from "../../components/common/CopyButton"
-import { api, AnalysisItem, RecommendationItem } from "../../api/client"
+import { useEffect, useState } from "react";
+import { ArrowLeft, ArrowRight, CheckCircle2, ShieldAlert, Terminal } from "lucide-react";
+import { useNavigate, useParams, useSearchParams } from "react-router";
+import Button from "../../components/common/Button";
+import CopyButton from "../../components/common/CopyButton";
+import { api, AnalysisItem, RecommendationItem } from "../../api/client";
 
 export default function RecommendationDetailPage() {
-  const navigate = useNavigate()
-  const { id } = useParams<{ id: string }>()
-  const [searchParams] = useSearchParams()
-  const analysisId = searchParams.get("analysisId") || ""
-  const [recommendation, setRecommendation] = useState<RecommendationItem | null>(null)
-  const [analysis, setAnalysis] = useState<AnalysisItem | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const navigate = useNavigate();
+  const { id } = useParams<{ id: string; }>();
+  const [searchParams] = useSearchParams();
+  const analysisId = searchParams.get("analysisId") || "";
+  const [recommendation, setRecommendation] = useState<RecommendationItem | null>(null);
+  const [analysis, setAnalysis] = useState<AnalysisItem | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadData() {
-      setLoading(true)
-      setError(null)
+      setLoading(true);
+      setError(null);
       try {
-        if (!analysisId) throw new Error("Recommendation details require an analysis ID.")
+        if (!analysisId) throw new Error("Recommendation details require an analysis ID.");
         const [ana, recs] = await Promise.all([
           api.getAnalysis(analysisId),
           api.getRecommendations(analysisId),
-        ])
-        const rec = recs.find((item) => item.recommendation_id === id)
-        if (!rec) throw new Error("This recommendation is not attached to the selected analysis.")
-        setAnalysis(ana)
-        setRecommendation(rec)
+        ]);
+        const rec = recs.find((item) => item.recommendation_id === id);
+        if (!rec) throw new Error("This recommendation is not attached to the selected analysis.");
+        setAnalysis(ana);
+        setRecommendation(rec);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load recommendation detail")
+        setError(err instanceof Error ? err.message : "Failed to load recommendation detail");
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
     }
-    loadData()
-  }, [id, analysisId])
+    loadData();
+  }, [id, analysisId]);
 
-  if (loading) return <div className="page narrow-page"><div className="page-heading"><h1>Loading recommendation…</h1></div></div>
+  if (loading) return <div className="page narrow-page"><div className="page-heading"><h1>Loading recommendation…</h1></div></div>;
   if (error || !recommendation || !analysis) {
-    return <div className="page narrow-page"><div className="page-heading"><h1>Recommendation unavailable</h1><p>{error || "No recommendation data was returned."}</p></div></div>
+    return <div className="page narrow-page"><div className="page-heading"><h1>Recommendation unavailable</h1><p>{error || "No recommendation data was returned."}</p></div></div>;
   }
 
-  const workloadName = analysis.repository?.workload?.name || "Unknown workload"
-  const commandText = recommendation.templates?.[0]?.content
-  const impact = recommendation.impact_estimate
-  const advantages = recommendation.advantages || []
-  const tradeoffs = recommendation.tradeoffs || []
-  const currentIdParam = `?id=${analysisId}`
+  const workloadName = analysis.repository?.workload?.name || "Unknown workload";
+  const commandText = recommendation.templates?.[0]?.content;
+  const impact = recommendation.impact_estimate;
+  const advantages = recommendation.advantages || [];
+  const tradeoffs = recommendation.tradeoffs || [];
+  const currentIdParam = `?id=${analysisId}`;
 
   return (
     <div className="page narrow-page">
@@ -125,5 +125,5 @@ export default function RecommendationDetailPage() {
         <Button onClick={() => navigate(`/configuration${currentIdParam}`)}>Download configuration <ArrowRight size={15} /></Button>
       </div>
     </div>
-  )
+  );
 }

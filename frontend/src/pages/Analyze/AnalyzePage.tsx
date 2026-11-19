@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react"
+import { FormEvent, useEffect, useState } from "react";
 import {
   Activity,
   ArrowRight,
@@ -9,118 +9,99 @@ import {
   Layers3,
   Loader2,
   Rocket,
-} from "lucide-react"
-import { useNavigate } from "react-router"
-import Button from "../../components/common/Button"
-import { api, ScalarCapabilities, WorkloadProfile } from "../../api/client"
-} from "lucide-react"
-import { useNavigate } from "react-router"
-import Button from "../../components/common/Button"
-import { api, WorkloadProfile } from "../../api/client"
-import { useRepository } from "../../context/RepositoryContext"
+} from "lucide-react";
+import { useNavigate } from "react-router";
+import Button from "../../components/common/Button";
+import { api, ScalarCapabilities, WorkloadProfile } from "../../api/client";
+import { useRepository } from "../../context/RepositoryContext";
 
-type Workload = "local" | "cicd" | "monorepo"
+type Workload = "local" | "cicd" | "monorepo";
 
 export default function AnalyzePage() {
-  const navigate = useNavigate()
-  const { setCurrentRepository } = useRepository()
-  const [url, setUrl] = useState("")
-  const [workload, setWorkload] = useState<Workload>("local")
-  const [ultraLargeMode, setUltraLargeMode] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [workloadProfiles, setWorkloadProfiles] = useState<WorkloadProfile[]>([])
-  const [scalarCapabilities, setScalarCapabilities] = useState<ScalarCapabilities | null>(null)
+  const navigate = useNavigate();
+  const { setCurrentRepository } = useRepository();
+  const [url, setUrl] = useState("");
+  const [workload, setWorkload] = useState<Workload>("local");
+  const [ultraLargeMode, setUltraLargeMode] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [workloadProfiles, setWorkloadProfiles] = useState<WorkloadProfile[]>([]);
+  const [scalarCapabilities, setScalarCapabilities] = useState<ScalarCapabilities | null>(null);
 
   useEffect(() => {
     Promise.allSettled([api.getWorkloads(), api.getScalarCapabilities()]).then((results) => {
-      const workloads = results[0]
-      const scalar = results[1]
+      const workloads = results[0];
+      const scalar = results[1];
 
       if (workloads.status === "fulfilled") {
-        setWorkloadProfiles(workloads.value)
+        setWorkloadProfiles(workloads.value);
       } else {
-        setError(workloads.reason instanceof Error ? workloads.reason.message : "Failed to load workload profiles")
+        setError(workloads.reason instanceof Error ? workloads.reason.message : "Failed to load workload profiles");
       }
 
       if (scalar.status === "fulfilled") {
-        setScalarCapabilities(scalar.value)
+        setScalarCapabilities(scalar.value);
       }
-    })
-  const [workloadProfiles, setWorkloadProfiles] = useState<WorkloadProfile[]>(
-    [],
-  )
-
-  useEffect(() => {
-    api
-      .getWorkloads()
-      .then(setWorkloadProfiles)
-      .catch((err) =>
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Failed to load workload profiles",
-        ),
-      )
-  }, [])
+    });
+  }, []);
 
   const submit = async (event: FormEvent) => {
-    event.preventDefault()
-    const repositoryUrl = url.trim()
-    if (!repositoryUrl) return
+    event.preventDefault();
+    const repositoryUrl = url.trim();
+    if (!repositoryUrl) return;
 
-    setLoading(true)
-    setError(null)
+    setLoading(true);
+    setError(null);
 
     try {
-      const parsed = new URL(repositoryUrl)
+      const parsed = new URL(repositoryUrl);
       if (
         parsed.hostname.toLowerCase() !== "github.com" ||
         parsed.pathname.split("/").filter(Boolean).length < 2
       ) {
         throw new Error(
           "Remote analysis currently supports GitHub repository URLs in the form https://github.com/owner/repository.",
-        )
+        );
       }
 
       if (ultraLargeMode && !scalarCapabilities?.supported) {
-        throw new Error("Ultra-Large Repository Mode is not available on this GitOpt backend host.")
+        throw new Error("Ultra-Large Repository Mode is not available on this GitOpt backend host.");
       }
 
       const slugMap: Record<Workload, WorkloadProfile["slug"]> = {
         local: "local_dev",
         cicd: "ci_cd",
         monorepo: "monorepo",
-      }
+      };
       const matched = workloadProfiles.find(
         (profile) => profile.slug === slugMap[workload],
-      )
+      );
       if (!matched)
         throw new Error(
           "The selected workload profile is unavailable. Refresh the page and try again.",
-        )
+        );
 
       const repo = await api.createRepository({
         url_path: repositoryUrl,
         workload_id: matched.id,
         source: "github",
-      })
+      });
 
-      setCurrentRepository(repo)
-      const analysis = await api.startAnalysis({ repository_id: repo.id })
+      setCurrentRepository(repo);
+      const analysis = await api.startAnalysis({ repository_id: repo.id });
 
       if (ultraLargeMode) {
-        const enlistment = await api.createScalarEnlistment(repo.id)
-        navigate(`/scalar?id=${enlistment.id}&analysisId=${analysis.id}`)
-        return
+        const enlistment = await api.createScalarEnlistment(repo.id);
+        navigate(`/scalar?id=${enlistment.id}&analysisId=${analysis.id}`);
+        return;
       }
 
-      navigate(`/progress?id=${analysis.id}`)
+      navigate(`/progress?id=${analysis.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start analysis")
-      setLoading(false)
+      setError(err instanceof Error ? err.message : "Failed to start analysis");
+      setLoading(false);
     }
-  }
+  };
 
   const workloadOptions = [
     [
@@ -141,9 +122,9 @@ export default function AnalyzePage() {
       "Monorepo development",
       "Multiple projects and teams working in different areas.",
     ],
-  ] as const
+  ] as const;
 
-  const scalarAvailable = scalarCapabilities?.supported === true
+  const scalarAvailable = scalarCapabilities?.supported === true;
 
   return (
     <div className="page narrow-page">
@@ -281,7 +262,6 @@ export default function AnalyzePage() {
           <div className="section-number">04</div>
           <div className="setup-content">
             <h2>Analysis scope</h2>
-            <p>GitOpt collects repository metadata, commit depth, branches, default-branch tree evidence and large-file information. Scalar mode additionally manages a server-side optimized workspace; it does not modify a repository on your personal computer.</p>
             <p>
               GitOpt currently collects repository metadata, commit depth,
               branches, the default-branch tree, large files, and
@@ -289,16 +269,17 @@ export default function AnalyzePage() {
               are modelled estimates until isolated operation benchmarking is
               implemented.
             </p>
+            <p>
+              Scalar mode manages an optimized workspace on the GitOpt backend.
+              Your local repository stays untouched.
+            </p>
           </div>
         </div>
 
         <div className="setup-footer">
-          <span><CheckCircle2 size={14} /> Remote analysis remains read-only. Scalar mode creates a separate managed backend workspace.</span>
-          <Button type="submit" disabled={loading || workloadProfiles.length === 0}>
-            {loading ? <><Loader2 size={15} className="animate-spin" /> Starting...</> : <>Start {ultraLargeMode ? "analysis + Scalar" : "analysis"} <ArrowRight size={15} /></>}
           <span>
-            <CheckCircle2 size={14} /> Read-only analysis. GitOpt never modifies
-            your repository.
+            <CheckCircle2 size={14} /> Remote analysis remains read-only.
+            Scalar mode creates a separate managed backend workspace.
           </span>
           <Button
             type="submit"
@@ -306,16 +287,17 @@ export default function AnalyzePage() {
           >
             {loading ? (
               <>
-                <Loader2 size={15} className="animate-spin" /> Analyzing...
+                <Loader2 size={15} className="animate-spin" /> Starting...
               </>
             ) : (
               <>
-                Start analysis <ArrowRight size={15} />
+                Start {ultraLargeMode ? "analysis + Scalar" : "analysis"}{" "}
+                <ArrowRight size={15} />
               </>
             )}
           </Button>
         </div>
       </form>
     </div>
-  )
+  );
 }

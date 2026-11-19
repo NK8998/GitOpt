@@ -1,6 +1,6 @@
-import { GitBranch } from "lucide-react"
+import { GitBranch } from "lucide-react";
 
-export default function Brand({ compact = false }: { compact?: boolean }) {
+export default function Brand({ compact = false }: { compact?: boolean; }) {
   return (
     <div className="brand">
       <div className="brand-mark">
@@ -8,5 +8,5 @@ export default function Brand({ compact = false }: { compact?: boolean }) {
       </div>
       {!compact && <strong>GitOpt</strong>}
     </div>
-  )
+  );
 }

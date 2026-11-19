@@ -1,13 +1,13 @@
-import { useEffect, useState } from "react"
-import { Outlet, useLocation } from "react-router"
-import AppHeader from "./AppHeader"
-import Sidebar from "./Sidebar"
-import { useRepository } from "../../context/RepositoryContext"
+import { useEffect, useState } from "react";
+import { Outlet, useLocation } from "react-router";
+import AppHeader from "./AppHeader";
+import Sidebar from "./Sidebar";
+import { useRepository } from "../../context/RepositoryContext";
 
 export default function MainLayout() {
-  const [menuOpen, setMenuOpen] = useState(false)
-  const location = useLocation()
-  const { currentRepository } = useRepository()
+  const [menuOpen, setMenuOpen] = useState(false);
+  const location = useLocation();
+  const { currentRepository } = useRepository();
   const titles: Record<string, string> = {
     "/analyze": "Analyze repository",
     "/progress": "Analysis progress",
@@ -15,11 +15,11 @@ export default function MainLayout() {
     "/recommendations": "Recommendations",
     "/benchmarks": "Benchmarks",
     "/configuration": "Configuration",
-  }
+  };
 
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: "smooth" })
-  }, [location.pathname])
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [location.pathname]);
 
   return (
     <div className="app-shell">
@@ -32,5 +32,5 @@ export default function MainLayout() {
         <Outlet />
       </div>
     </div>
-  )
+  );
 }

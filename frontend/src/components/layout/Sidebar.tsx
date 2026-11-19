@@ -12,32 +12,32 @@ import {
   Terminal,
   X,
   Zap,
-} from "lucide-react"
-import { useLocation, useNavigate } from "react-router"
-import Brand from "../common/Brand"
-import Button from "../common/Button"
-import { useRepository } from "../../context/RepositoryContext"
+} from "lucide-react";
+import { useLocation, useNavigate } from "react-router";
+import Brand from "../common/Brand";
+import Button from "../common/Button";
+import { useRepository } from "../../context/RepositoryContext";
 
 export default function Sidebar({
   open,
   close,
 }: {
-  open: boolean
-  close: () => void
+  open: boolean;
+  close: () => void;
 }) {
-  const location = useLocation()
-  const navigate = useNavigate()
-  const { currentRepository } = useRepository()
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { currentRepository } = useRepository();
   const nav = [
     ["/overview", CircleGauge, "Overview"],
     ["/recommendations", Sparkles, "Recommendations"],
     ["/benchmarks", BarChart3, "Benchmarks"],
     ["/configuration", Terminal, "Configuration"],
-  ] as const
+  ] as const;
   const goTo = (path: string) => {
-    navigate(path)
-    close()
-  }
+    navigate(path);
+    close();
+  };
   return (
     <>
       {open && (
@@ -119,5 +119,5 @@ export default function Sidebar({
         </div>
       </aside>
     </>
-  )
+  );
 }
