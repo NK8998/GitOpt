@@ -1428,7 +1428,7 @@ pre,
 
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
   gap: 8px;
   margin: 12px 0;
 }
@@ -1583,12 +1583,12 @@ pre,
 
 .donut strong {
   font-family: "Roboto Mono", monospace;
-  font-size: 19px;
+  font-size: 13px;
 }
 
 .donut small {
   color: #66707d;
-  font-size: 8px;
+  font-size: 9.5px;
 }
 
 .legend {
@@ -2079,7 +2079,6 @@ pre,
 }
 
 @media (max-width: 1050px) {
-  .metrics-grid { grid-template-columns: repeat(3, 1fr); }
   .hero { grid-template-columns: 1fr; padding-top: 70px; }
   .hero-copy { text-align: center; }
   .hero-copy h1, .hero-copy > p { margin-right: auto; margin-left: auto; }
@@ -2113,7 +2112,6 @@ pre,
   .app-header { padding-left: 16px; }
   .app-header > div:first-of-type { margin-right: auto; margin-left: 12px; }
   .overview-grid, .progress-layout, .config-layout { grid-template-columns: 1fr; }
-  .metrics-grid { grid-template-columns: repeat(3, 1fr); }
   .health-summary { grid-template-columns: 85px 1fr; }
   .health-action { grid-column: 1/3; flex-direction: row; align-items: center; justify-content: space-between; }
   .benefit-command { grid-template-columns: 1fr; }
@@ -2144,7 +2142,6 @@ pre,
   .setup-footer .button { width: 100%; }
   .progress-heading { align-items: flex-start; }
   .progress-footer { align-items: flex-start; flex-direction: column; gap: 13px; }
-  .metrics-grid { grid-template-columns: repeat(2, 1fr); }
   .health-summary { grid-template-columns: 1fr; }
   .score { height: auto; justify-content: flex-start; border-right: 0; border-bottom: 1px solid var(--border-soft); padding: 0 0 15px; }
   .health-action { grid-column: auto; align-items: flex-start; flex-direction: column; }
