@@ -28,11 +28,12 @@ export class ScalarController {
     try {
       const enlistment = await scalarService.createEnlistment({
         repository_id: req.body.repository_id,
+        checkout_scope: req.body.checkout_scope,
         actor_user_id: actorUserId(req),
       });
       res.status(202).json({
         status: 'success',
-        message: 'Scalar clone scheduled',
+        message: 'Scalar workspace setup scheduled',
         data: enlistment,
       });
     } catch (error) {

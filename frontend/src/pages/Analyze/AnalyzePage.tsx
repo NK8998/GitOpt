@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import Button from "../../components/common/Button";
-import { api, ScalarCapabilities, WorkloadProfile } from "../../api/client";
+import { api, WorkloadProfile } from "../../api/client";
 import { useRepository } from "../../context/RepositoryContext";
 
 type Workload = "local" | "cicd" | "monorepo";
@@ -26,22 +26,9 @@ export default function AnalyzePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [workloadProfiles, setWorkloadProfiles] = useState<WorkloadProfile[]>([]);
-  const [scalarCapabilities, setScalarCapabilities] = useState<ScalarCapabilities | null>(null);
-
   useEffect(() => {
-    Promise.allSettled([api.getWorkloads(), api.getScalarCapabilities()]).then((results) => {
-      const workloads = results[0];
-      const scalar = results[1];
-
-      if (workloads.status === "fulfilled") {
-        setWorkloadProfiles(workloads.value);
-      } else {
-        setError(workloads.reason instanceof Error ? workloads.reason.message : "Failed to load workload profiles");
-      }
-
-      if (scalar.status === "fulfilled") {
-        setScalarCapabilities(scalar.value);
-      }
+    api.getWorkloads().then(setWorkloadProfiles).catch((error) => {
+      setError(error instanceof Error ? error.message : "Failed to load workload profiles");
     });
   }, []);
 
@@ -62,10 +49,6 @@ export default function AnalyzePage() {
         throw new Error(
           "Remote analysis currently supports GitHub repository URLs in the form https://github.com/owner/repository.",
         );
-      }
-
-      if (ultraLargeMode && !scalarCapabilities?.supported) {
-        throw new Error("Ultra-Large Repository Mode is not available on this GitOpt backend host.");
       }
 
       const slugMap: Record<Workload, WorkloadProfile["slug"]> = {
@@ -90,13 +73,7 @@ export default function AnalyzePage() {
       setCurrentRepository(repo);
       const analysis = await api.startAnalysis({ repository_id: repo.id });
 
-      if (ultraLargeMode) {
-        const enlistment = await api.createScalarEnlistment(repo.id);
-        navigate(`/scalar?id=${enlistment.id}&analysisId=${analysis.id}`);
-        return;
-      }
-
-      navigate(`/progress?id=${analysis.id}`);
+      navigate(`/progress?id=${analysis.id}${ultraLargeMode ? "&mode=ultra-large" : ""}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start analysis");
       setLoading(false);
@@ -123,8 +100,6 @@ export default function AnalyzePage() {
       "Multiple projects and teams working in different areas.",
     ],
   ] as const;
-
-  const scalarAvailable = scalarCapabilities?.supported === true;
 
   return (
     <div className="page narrow-page">
@@ -216,12 +191,11 @@ export default function AnalyzePage() {
           <div className="section-number">03</div>
           <div className="setup-content">
             <h2>Ultra-Large Repository Mode</h2>
-            <p>Use Scalar to create a managed partial-clone workspace on the GitOpt backend for very large repositories and monorepos.</p>
-
             <button
               type="button"
-              onClick={() => scalarAvailable && setUltraLargeMode((value) => !value)}
-              disabled={loading || !scalarAvailable}
+              aria-pressed={ultraLargeMode}
+              onClick={() => setUltraLargeMode((value) => !value)}
+              disabled={loading}
               style={{
                 width: "100%",
                 display: "flex",
@@ -233,27 +207,25 @@ export default function AnalyzePage() {
                 background: ultraLargeMode ? "rgba(96,165,250,0.08)" : "transparent",
                 color: "var(--text-bright)",
                 textAlign: "left",
-                cursor: scalarAvailable ? "pointer" : "not-allowed",
-                opacity: scalarAvailable ? 1 : 0.6,
+                cursor: loading ? "not-allowed" : "pointer",
               }}
             >
               <Rocket size={20} />
               <span style={{ flex: 1 }}>
-                <strong style={{ display: "block", marginBottom: 4 }}>Ultra-Large Repo Mode (Scalar)</strong>
+                <strong style={{ display: "block", marginBottom: 4 }}>Compare large-repository strategies</strong>
                 <small style={{ color: "var(--text-muted)" }}>
-                  {scalarAvailable
-                    ? "Uses Scalar partial-clone/sparse-checkout defaults, starts with maintenance disabled when supported, and enables explicit maintenance and MIDX optimization from the dashboard."
-                    : "Unavailable because this backend host does not currently expose the required Git Scalar capabilities."}
+                  View transfer estimates first, then optionally run a live Scalar clone on the GitOpt backend.
                 </small>
               </span>
               <span style={{ fontWeight: 700 }}>{ultraLargeMode ? "ON" : "OFF"}</span>
             </button>
 
-            {scalarCapabilities && !scalarCapabilities.clone_options.no_prefetch && (
-              <small className="field-help" style={{ marginTop: 10 }}>
-                GitOpt detected that this Scalar version does not advertise <code>--no-prefetch</code>; it will use the supported Scalar partial-clone behavior instead.
-              </small>
-            )}
+            <p style={{ marginTop: 12 }}>
+              GitHub clones use Git’s standard partial-clone protocol. The default checkout starts with root-level files at HEAD and fetches other content as needed.
+            </p>
+            <p>
+              GVFS requires a remote that serves GVFS endpoints and a client using that protocol. Microsoft Scalar’s <code>--no-prefetch</code> and parallel object downloads are GVFS features.
+            </p>
           </div>
         </div>
 
@@ -291,7 +263,7 @@ export default function AnalyzePage() {
               </>
             ) : (
               <>
-                Start {ultraLargeMode ? "analysis + Scalar" : "analysis"}{" "}
+                Start analysis{" "}
                 <ArrowRight size={15} />
               </>
             )}

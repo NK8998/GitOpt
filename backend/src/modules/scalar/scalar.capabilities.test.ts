@@ -67,7 +67,7 @@ test('does not invent --no-prefetch support', async () => {
   const result = await service.detect();
 
   assert.equal(result.clone_options.no_prefetch, false);
-  assert.ok(result.warnings.some((warning) => warning.includes('--no-prefetch')));
+  assert.ok(result.warnings.every((warning) => !warning.includes('--no-prefetch')));
 });
 
 test('rejects an unrelated scalar executable', async () => {

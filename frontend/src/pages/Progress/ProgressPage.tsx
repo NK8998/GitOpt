@@ -24,6 +24,7 @@ export default function ProgressPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const analysisId = searchParams.get("id") || "";
+  const ultraLarge = searchParams.get("mode") === "ultra-large";
   const [analysis, setAnalysis] = useState<AnalysisItem | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -135,8 +136,8 @@ export default function ProgressPage() {
       <div className="progress-footer">
         <p><Clock3 size={15} /> Progress and metrics shown here come from the backend analysis record.</p>
         {done && (
-          <Button onClick={() => navigate(`/overview?id=${analysisId}`)}>
-            View analysis <ArrowRight size={15} />
+          <Button onClick={() => navigate(ultraLarge ? `/benchmarks?id=${analysisId}&mode=ultra-large` : `/overview?id=${analysisId}`)}>
+            {ultraLarge ? "View strategy comparison" : "View analysis"} <ArrowRight size={15} />
           </Button>
         )}
       </div>

@@ -1,6 +1,7 @@
 import { QueryResultRow } from 'pg';
 import { pgPool } from '../../config/database';
 import {
+  ScalarCheckoutScope,
   ScalarEnlistmentDetails,
   ScalarEnlistmentRecord,
   ScalarOperationRecord,
@@ -21,6 +22,11 @@ function mapEnlistment(row: QueryResultRow): ScalarEnlistmentRecord {
     workspace_path: row.workspace_path,
     worktree_path: row.worktree_path ?? null,
     clone_mode: row.clone_mode,
+    checkout_scope: row.checkout_scope,
+    setup_status: row.setup_status ?? null,
+    head_commit: row.head_commit ?? null,
+    git_bytes: row.git_bytes == null ? null : Number(row.git_bytes),
+    worktree_bytes: row.worktree_bytes == null ? null : Number(row.worktree_bytes),
     status: row.status,
     scalar_version: row.scalar_version ?? null,
     git_version: row.git_version ?? null,
@@ -68,23 +74,30 @@ export class ScalarRepository {
     repository_id: string;
     user_id: string;
     workspace_path: string;
+    checkout_scope: ScalarCheckoutScope;
     scalar_version?: string | null;
     git_version?: string | null;
-  }): Promise<ScalarEnlistmentRecord> {
+  }): Promise<{ enlistment: ScalarEnlistmentRecord; operation: ScalarOperationRecord }> {
     const result = await pgPool.query(
-      `INSERT INTO scalar_enlistments(
-         repository_id, user_id, workspace_path, scalar_version, git_version
-       ) VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
+      `WITH enlistment AS (
+         INSERT INTO scalar_enlistments(
+           repository_id, user_id, workspace_path, scalar_version, git_version, checkout_scope, setup_status
+         ) VALUES ($1, $2, $3, $4, $5, $6, 'running') RETURNING *
+       ), operation AS (
+         INSERT INTO scalar_operations(enlistment_id, operation_type)
+         SELECT id, 'clone' FROM enlistment RETURNING *
+       )
+       SELECT enlistment.*, row_to_json(operation) AS operation FROM enlistment, operation`,
       [
         data.repository_id,
         data.user_id,
         data.workspace_path,
         data.scalar_version ?? null,
         data.git_version ?? null,
+        data.checkout_scope,
       ]
     );
-    return mapEnlistment(result.rows[0]);
+    return { enlistment: mapEnlistment(result.rows[0]), operation: mapOperation(result.rows[0].operation) };
   }
 
   async getById(id: string): Promise<ScalarEnlistmentRecord | null> {
@@ -130,6 +143,10 @@ export class ScalarRepository {
         | 'error_message'
         | 'scalar_version'
         | 'git_version'
+        | 'setup_status'
+        | 'head_commit'
+        | 'git_bytes'
+        | 'worktree_bytes'
       >
     >
   ): Promise<ScalarEnlistmentRecord> {
@@ -145,6 +162,10 @@ export class ScalarRepository {
       'error_message',
       'scalar_version',
       'git_version',
+      'setup_status',
+      'head_commit',
+      'git_bytes',
+      'worktree_bytes',
     ] as const;
 
     const assignments: string[] = [];
@@ -253,32 +274,18 @@ export class ScalarRepository {
 
   async reconcileInterruptedOperations(): Promise<number> {
     const result = await pgPool.query(
-      `UPDATE scalar_operations
-       SET status = 'failed',
-           completed_at = CURRENT_TIMESTAMP,
-           error_message = COALESCE(
-             error_message,
-             'Operation interrupted by backend restart'
-           )
-       WHERE status IN ('pending', 'running')
-       RETURNING enlistment_id`
+      `WITH interrupted AS (
+         UPDATE scalar_operations
+         SET status = 'failed', completed_at = CURRENT_TIMESTAMP,
+             error_message = COALESCE(error_message, 'Operation interrupted by backend restart')
+         WHERE status IN ('pending', 'running') RETURNING enlistment_id
+       )
+       UPDATE scalar_enlistments
+       SET setup_status = CASE WHEN setup_status = 'running' THEN 'failed' ELSE setup_status END,
+           status = CASE WHEN worktree_path IS NULL THEN 'failed' WHEN midx_verified THEN 'optimized' ELSE 'ready' END,
+           error_message = 'Scalar operation interrupted by backend restart', updated_at = CURRENT_TIMESTAMP
+       WHERE setup_status = 'running' OR id IN (SELECT enlistment_id FROM interrupted)`
     );
-
-    if (result.rowCount) {
-      const enlistmentIds = [...new Set(result.rows.map((row) => row.enlistment_id))];
-      await pgPool.query(
-        `UPDATE scalar_enlistments
-         SET status = 'failed',
-             error_message = COALESCE(
-               error_message,
-               'Last Scalar operation was interrupted by backend restart'
-             ),
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ANY($1::uuid[])`,
-        [enlistmentIds]
-      );
-    }
-
     return result.rowCount ?? 0;
   }
 }

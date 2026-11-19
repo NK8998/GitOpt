@@ -27,6 +27,7 @@ const envSchema = z.object({
   GITHUB_TOKEN: optionalNonEmptyString,
   SCALAR_WORKSPACE_ROOT: z.string().default('./.gitopt-workspaces'),
   SCALAR_COMMAND_TIMEOUT_MS: z.coerce.number().int().positive().default(30 * 60 * 1000),
+  SCALAR_WORKSPACE_MAX_BYTES: z.coerce.number().int().positive().default(12_000_000_000),
 }).superRefine((values, context) => {
   if (values.NODE_ENV !== 'test' && !values.DATABASE_URL && !values.PGPASSWORD) {
     context.addIssue({

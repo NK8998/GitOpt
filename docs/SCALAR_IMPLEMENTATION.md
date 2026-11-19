@@ -2,37 +2,25 @@
 
 ## Scope
 
-GitOpt Ultra-Large Repository Mode manages a Scalar workspace on the backend host for registered GitHub repositories. It extends the existing analysis flow; it does not create a checkout on the user's local computer.
+GitOpt Ultra-Large Repository Mode opens a strategy comparison after analysis and offers an optional managed Scalar workspace on the backend for registered GitHub repositories. [MVP spec](ULTRA_LARGE_REPOSITORY_MVP_SPEC.md)
 
 ## Implemented flow
 
 ```text
-register repository
-      |
-      +--> normal GitOpt analysis
-      |
-      +--> optional Scalar enlistment
-               |
-               v
-          scalar clone
-               |
-               v
-             ready
-          /         \
- maintenance       MIDX write
-                       |
-                       v
-                   MIDX verify
-                       |
-                       v
-                   optimized
+register repository → analyze → strategy comparison
+                                     |
+                                     v
+                         optional live Scalar setup
+                                     |
+                                     v
+       checkout at HEAD → MIDX write → MIDX verify → schedule maintenance
 ```
 
 ## Capability detection
 
 `GET /api/v1/scalar/capabilities` detects the backend host's actual Git and Scalar command surface.
 
-GitOpt does not assume `--no-prefetch` exists. Clone flags are capability-driven. When supported, GitOpt uses `--no-maintenance` so the user can explicitly enable maintenance from the workspace dashboard.
+GitOpt checks clone flag support and requires `--no-maintenance` to defer maintenance scheduling until MIDX verification. GitHub workspaces use standard partial clone. Microsoft Scalar’s `--no-prefetch` applies to GVFS remotes. [Microsoft Scalar source](https://github.com/microsoft/git/blob/v2.56.1.vfs.0.1/scalar.c#L930-L1017)
 
 ## Managed workspace security
 
@@ -44,7 +32,7 @@ SCALAR_WORKSPACE_ROOT
 
 The clone URL is taken from the registered GitOpt repository rather than from an arbitrary command payload.
 
-CLI execution uses `execFile` with an executable plus argument array. Shell interpolation is not used. Interactive terminal prompts are disabled.
+CLI execution uses `spawn` with an executable and argument array. Interactive terminal prompts are disabled. Per-operation Trace2 JSONL is stored under `.traces` inside the workspace root with an operation ID, file size limit, and seven-day retention checked at trace creation.
 
 ## PostgreSQL
 
@@ -56,6 +44,8 @@ Migration `002_scalar_enlistments.sql` adds:
 Enlistments persist repository ownership, managed paths, tool versions, repository configuration state, optimization state, errors, and timestamps.
 
 Operations persist clone, maintenance, MIDX write, and MIDX verify lifecycle records.
+
+Migration `003_ultra_large_repository.sql` adds checkout scope, setup status, the verified HEAD, checkout byte counts, and the pinned Linux comparison snapshot.
 
 Only one pending/running operation is permitted for an enlistment at a time.
 
@@ -70,11 +60,12 @@ POST /api/v1/scalar/enlistments
 Content-Type: application/json
 
 {
-  "repository_id": "<uuid>"
+  "repository_id": "<uuid>",
+  "checkout_scope": "root"
 }
 ```
 
-Returns `202 Accepted`.
+Returns `202 Accepted`. The checkout scope accepts `root` or `full` and defaults to `root`.
 
 ### Inspect enlistment
 
@@ -115,26 +106,41 @@ Write and verification are persisted as separate operations.
 
 ## Frontend
 
-The Analyze page includes an Ultra-Large Repo Mode toggle when the backend reports the required Scalar capabilities.
+The Analyze page offers Ultra-Large Repository Mode for the comparison. The comparison page checks backend capabilities before enabling the live action.
 
 When selected:
 
-1. GitOpt registers the repository.
-2. Standard analysis starts.
-3. A Scalar enlistment is created.
-4. The user is routed to the Scalar workspace dashboard.
-5. The dashboard polls persisted backend state.
-6. The user can enable maintenance and run MIDX optimization.
-7. The standard GitOpt analysis remains accessible.
+1. GitOpt registers the repository and starts analysis.
+2. The progress page opens the strategy comparison with the pinned Linux reference.
+3. A user can start a live root-only or full working-tree checkout from that page.
+4. The Scalar dashboard polls setup state and records checkout, MIDX, and maintenance scheduling outcomes.
+5. The comparison and retry actions remain available from the workspace dashboard.
 
 ## Environment
 
 ```env
 SCALAR_WORKSPACE_ROOT="./.gitopt-workspaces"
 SCALAR_COMMAND_TIMEOUT_MS=1800000
+SCALAR_WORKSPACE_MAX_BYTES=12000000000
 ```
 
 The workspace directory is ignored by Git.
+
+## Refresh the Linux reference
+
+Run `npm run collect:ultra-large -- <phase>` from `backend`. The phases are `tree`, `history`, `root`, `full`, and `full-clone`. The command uses the pinned reference commit and records each completed pack independently. Add `--diagnostics` after a pack phase to capture redacted HTTP headers alongside Trace2.
+
+For an extracted Microsoft Git Linux tarball, point both `PATH` and `GIT_EXEC_PATH` at the same installation. The template directory is also available in the portable installation.
+
+```bash
+gitopt_toolchain="$HOME/.local/opt/gitopt/microsoft-git-2.56.1.vfs.0.1/usr/local"
+export PATH="$gitopt_toolchain/bin:$PATH"
+export GIT_EXEC_PATH="$gitopt_toolchain/lib/git-core"
+export GIT_TEMPLATE_DIR="$gitopt_toolchain/share/git-core/templates"
+git --version
+scalar version
+npm run dev
+```
 
 ## Current execution model
 

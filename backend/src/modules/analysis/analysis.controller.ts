@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { analysisService } from './analysis.service';
 import { recommendationService } from '../recommendation/recommendation.service';
 import { benchmarkService } from '../benchmark/benchmark.service';
+import { getUltraLargeComparison } from '../benchmark/ultraLargeComparison';
 
 export class AnalysisController {
   async trigger(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -70,6 +71,9 @@ export class AnalysisController {
     try {
       const { id } = req.params;
       const benchmarks = await benchmarkService.getBenchmarksByAnalysisId(id);
+      if (req.query.mode === 'ultra-large') {
+        benchmarks.ultra_large = await getUltraLargeComparison();
+      }
 
       res.status(200).json({
         status: 'success',

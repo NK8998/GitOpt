@@ -43,6 +43,9 @@ export interface ScalarCapabilities {
     no_maintenance: boolean;
     no_prefetch: boolean;
     no_src: boolean;
+    single_branch: boolean;
+    no_tags: boolean;
+    full_clone: boolean;
   };
   features: {
     scalar_partial_clone_defaults: boolean;
@@ -179,6 +182,9 @@ export class ScalarCapabilitiesService {
       no_prefetch:
         isGitScalar && advertisesOption(scalarCloneHelp, '--no-prefetch'),
       no_src: isGitScalar && advertisesOption(scalarCloneHelp, '--no-src'),
+      single_branch: isGitScalar && advertisesOption(scalarCloneHelp, '--single-branch'),
+      no_tags: isGitScalar && advertisesOption(scalarCloneHelp, '--no-tags'),
+      full_clone: isGitScalar && advertisesOption(scalarCloneHelp, '--full-clone'),
     };
 
     const warnings: string[] = [];
@@ -199,9 +205,9 @@ export class ScalarCapabilitiesService {
       warnings.push('The installed Git Scalar does not advertise the clone command.');
     }
 
-    if (isGitScalar && !cloneOptions.no_prefetch) {
+    if (isGitScalar && commands.scalar_clone && !cloneOptions.no_maintenance) {
       warnings.push(
-        'The installed Git Scalar does not advertise --no-prefetch; clone execution must use the supported partial-clone behavior for this version.'
+        'The installed Git Scalar must support --no-maintenance to schedule maintenance after MIDX verification.'
       );
     }
 
@@ -217,6 +223,7 @@ export class ScalarCapabilitiesService {
       gitAvailable &&
       isGitScalar &&
       commands.scalar_clone &&
+      cloneOptions.no_maintenance &&
       commands.git_maintenance &&
       commands.git_multi_pack_index;
 

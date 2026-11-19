@@ -16,6 +16,7 @@ function optionalAuth(req: any, res: any, next: any) {
 
 const createEnlistmentSchema = z.object({
   repository_id: z.string().uuid(),
+  checkout_scope: z.enum(['root', 'full']).default('root'),
 });
 
 router.get(

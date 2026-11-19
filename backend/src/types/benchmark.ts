@@ -33,4 +33,27 @@ export interface BenchmarkComparisonDTO {
     disk_usage_gb: number[];
     labels: string[];
   };
+  ultra_large?: UltraLargeComparisonDTO;
+}
+
+export interface UltraLargeComparisonDTO {
+  network_mbps: number;
+  repository: string;
+  branch: string;
+  head_commit: string;
+  tree_sha: string;
+  collected_at: string;
+  git_version: string;
+  provenance: Record<string, { source: string; git_version?: string; collected_at?: string }>;
+  repository_bytes: number;
+  history_pack_bytes: number | null;
+  full_clone_pack_bytes: number | null;
+  full_clone_transfer_seconds: number | null;
+  scopes: {
+    scope: 'root' | 'full';
+    logical_checkout_bytes: number;
+    checkout_pack_bytes: number | null;
+    checkout_transfer_seconds: number | null;
+    partial_transfer_seconds: number | null;
+  }[];
 }

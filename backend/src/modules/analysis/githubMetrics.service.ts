@@ -67,6 +67,68 @@ export class GitHubMetricsService {
     }
   }
 
+  async collectCheckoutSnapshot(repositoryUrl: string, head: string, includeFullTree: boolean) {
+    const location = this.parseRepositoryUrl(repositoryUrl);
+    if (!location || !/^[a-f0-9]{40}$/.test(head)) throw new Error('A GitHub repository and pinned commit are required');
+    const base = `/repos/${encodeURIComponent(location.owner)}/${encodeURIComponent(location.repo)}`;
+    const signal = AbortSignal.timeout(env.SCALAR_COMMAND_TIMEOUT_MS);
+    const [{ data: repository }, { data: commit }] = await Promise.all([
+      this.requestJson<GitHubRepositoryResponse>(base, signal),
+      this.requestJson<{ sha: string; tree: { sha: string } }>(`${base}/git/commits/${head}`, signal),
+    ]);
+    if (commit.sha !== head) throw new Error('GitHub returned a different commit than requested');
+
+    const getTree = async (sha: string, recursive = false) => {
+      const { data } = await this.requestJson<GitHubTreeResponse>(
+        `${base}/git/trees/${sha}${recursive ? '?recursive=1' : ''}`, signal
+      );
+      if (data.sha !== sha || (!recursive && data.truncated)) throw new Error('GitHub returned an incomplete checkout tree');
+      return data;
+    };
+    const root = await getTree(commit.tree.sha);
+    const rootBlobs = new Set<string>();
+    const fullBlobs = new Set<string>();
+    const addBlobs = (entries: GitHubTreeEntry[], target: Set<string>) => {
+      let bytes = 0;
+      for (const entry of entries) {
+        if (entry.type !== 'blob') continue;
+        if (entry.size === undefined || !Number.isSafeInteger(entry.size) || entry.size < 0 || !/^[a-f0-9]{40}$/.test(entry.sha)) {
+          throw new Error('GitHub returned an incomplete blob entry');
+        }
+        bytes += entry.size;
+        target.add(entry.sha);
+      }
+      return bytes;
+    };
+
+    const rootBytes = addBlobs(root.tree, rootBlobs);
+    let fullBytes = rootBytes;
+    if (includeFullTree) {
+      for (const oid of rootBlobs) fullBlobs.add(oid);
+      const pending = root.tree.filter((entry) => entry.type === 'tree').map((entry) => entry.sha);
+      while (pending.length) {
+        const sha = pending.pop()!;
+        const recursive = await getTree(sha, true);
+        if (!recursive.truncated) {
+          fullBytes += addBlobs(recursive.tree, fullBlobs);
+          continue;
+        }
+        const subtree = await getTree(sha);
+        fullBytes += addBlobs(subtree.tree, fullBlobs);
+        for (const entry of subtree.tree) if (entry.type === 'tree') pending.push(entry.sha);
+      }
+    }
+
+    return {
+      treeSha: root.sha,
+      repositoryBytes: repository.size * 1024,
+      rootBytes,
+      fullBytes: includeFullTree ? fullBytes : null,
+      rootBlobs: [...rootBlobs],
+      fullBlobs: [...fullBlobs],
+    };
+  }
+
   async collect(repositoryUrl: string): Promise<CollectedRepositoryMetrics> {
     const location = this.parseRepositoryUrl(repositoryUrl);
     if (!location) {
@@ -206,7 +268,7 @@ export class GitHubMetricsService {
     }
   }
 
-  private async requestJson<T>(endpoint: string): Promise<{ data: T; headers: Headers }> {
+  private async requestJson<T>(endpoint: string, signal?: AbortSignal): Promise<{ data: T; headers: Headers }> {
     const headers: Record<string, string> = {
       Accept: 'application/vnd.github+json',
       'User-Agent': 'GitOpt/1.0',
@@ -217,7 +279,7 @@ export class GitHubMetricsService {
       headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
     }
 
-    const response = await fetch(`https://api.github.com${endpoint}`, { headers });
+    const response = await fetch(`https://api.github.com${endpoint}`, { headers, signal });
 
     if (!response.ok) {
       let detail = response.statusText;

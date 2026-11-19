@@ -14,7 +14,7 @@ async function startServer() {
   await db.init();
   const interruptedScalarOperations = await scalarService.reconcileInterruptedOperations();
   if (interruptedScalarOperations > 0) {
-    console.warn(`⚠ Reconciled ${interruptedScalarOperations} interrupted Scalar operation(s).`);
+    console.warn(`⚠ Reconciled interrupted Scalar operations for ${interruptedScalarOperations} workspace(s).`);
   }
 
   const app = createApp();

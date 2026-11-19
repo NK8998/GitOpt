@@ -3,11 +3,13 @@ import { ArrowRight, RefreshCw, Terminal, Zap } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router";
 import Button from "../../components/common/Button";
 import { api, AnalysisItem, BenchmarkComparison } from "../../api/client";
+import UltraLargeComparisonPanel from "./UltraLargeComparisonPanel";
 
 export default function BenchmarksPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const requestedAnalysisId = searchParams.get("id") || "";
+  const ultraLarge = searchParams.get("mode") === "ultra-large";
   const [analysis, setAnalysis] = useState<AnalysisItem | null>(null);
   const [benchmarks, setBenchmarks] = useState<BenchmarkComparison | null>(null);
   const [running, setRunning] = useState(false);
@@ -28,7 +30,7 @@ export default function BenchmarksPage() {
 
         const [ana, bench] = await Promise.all([
           api.getAnalysis(currentId),
-          api.getBenchmarks(currentId),
+          api.getBenchmarks(currentId, ultraLarge),
         ]);
         setAnalysis(ana);
         setBenchmarks(bench);
@@ -39,13 +41,14 @@ export default function BenchmarksPage() {
       }
     }
     loadData();
-  }, [requestedAnalysisId]);
+  }, [requestedAnalysisId, ultraLarge]);
 
   const handleRecalculate = async () => {
     if (!analysis?.id) return;
     setRunning(true);
     try {
-      setBenchmarks(await api.runBenchmarks(analysis.id));
+      const updated = await api.runBenchmarks(analysis.id);
+      setBenchmarks((previous) => ({ ...updated, ultra_large: previous?.ultra_large }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to recalculate estimates");
     } finally {
@@ -68,17 +71,18 @@ export default function BenchmarksPage() {
     <div className="page">
       <div className="page-heading split-heading">
         <div>
-          <div className="eyebrow">MODELLED STRATEGY COMPARISON</div>
-          <h1>Optimization estimates</h1>
-          <p>Estimated performance for <b>{repoName}</b> under a {workloadName.toLowerCase()} workload. These values are not measured Git operation timings.</p>
+          <h1>{ultraLarge ? "Ultra-Large Repository Mode" : "Optimization estimates"}</h1>
+          <p>Estimated performance for <b>{repoName}</b> under a {workloadName.toLowerCase()} workload.</p>
         </div>
         <Button variant="secondary" onClick={handleRecalculate} disabled={running}>
           <RefreshCw size={14} className={running ? "animate-spin" : ""} /> {running ? "Recalculating..." : "Recalculate estimates"}
         </Button>
       </div>
 
+      {ultraLarge && <UltraLargeComparisonPanel key={analysis.id} analysis={analysis} reference={benchmarks.ultra_large} />}
+
       <section className="panel" style={{ padding: 16, marginBottom: 20 }}>
-        <strong>Methodology</strong>
+        <strong>{ultraLarge ? "Modelled comparison for this repository" : "Methodology"}</strong>
         <p style={{ marginBottom: 0, color: "var(--text-muted)" }}>{benchmarks.methodology}</p>
       </section>
 

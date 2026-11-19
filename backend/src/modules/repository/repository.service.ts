@@ -53,11 +53,7 @@ export class RepositoryService {
 
   async getAllRepositories(): Promise<RepositoryRecord[]> {
     await db.init();
-    const repos = Array.from(db.repositories.values());
-    return repos.map((r) => ({
-      ...r,
-      workload: db.workloadProfiles.get(r.workload_id),
-    }));
+    return db.getAllRepositories();
   }
 
   async getRepositoryDetails(

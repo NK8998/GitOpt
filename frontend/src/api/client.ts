@@ -119,6 +119,9 @@ export interface ScalarCapabilities {
     no_maintenance: boolean;
     no_prefetch: boolean;
     no_src: boolean;
+    single_branch: boolean;
+    no_tags: boolean;
+    full_clone: boolean;
   };
   features: {
     scalar_partial_clone_defaults: boolean;
@@ -148,6 +151,11 @@ export interface ScalarEnlistmentItem {
   workspace_path: string;
   worktree_path: string | null;
   clone_mode: string;
+  checkout_scope: ScalarCheckoutScope;
+  setup_status: 'running' | 'completed' | 'failed' | null;
+  head_commit: string | null;
+  git_bytes: number | null;
+  worktree_bytes: number | null;
   status: 'pending' | 'cloning' | 'ready' | 'optimizing' | 'optimized' | 'failed';
   scalar_version: string | null;
   git_version: string | null;
@@ -161,6 +169,30 @@ export interface ScalarEnlistmentItem {
   created_at: string;
   updated_at: string;
   operations: ScalarOperationItem[];
+}
+
+export type ScalarCheckoutScope = 'root' | 'full';
+
+export interface UltraLargeComparison {
+  network_mbps: number;
+  repository: string;
+  branch: string;
+  head_commit: string;
+  tree_sha: string;
+  collected_at: string;
+  git_version: string;
+  provenance: Record<string, { source: string; git_version?: string; collected_at?: string }>;
+  repository_bytes: number;
+  history_pack_bytes: number | null;
+  full_clone_pack_bytes: number | null;
+  full_clone_transfer_seconds: number | null;
+  scopes: {
+    scope: ScalarCheckoutScope;
+    logical_checkout_bytes: number;
+    checkout_pack_bytes: number | null;
+    checkout_transfer_seconds: number | null;
+    partial_transfer_seconds: number | null;
+  }[];
 }
 
 export interface BenchmarkStrategy {
@@ -179,6 +211,7 @@ export interface BenchmarkComparison {
   percent_faster: number;
   is_estimated: boolean;
   methodology: string;
+  ultra_large?: UltraLargeComparison;
   strategies: BenchmarkStrategy[];
   chart_series: {
     clone_time_min: number[];
@@ -262,18 +295,19 @@ export const api = {
     return request<TemplateItem[]>(`/api/v1/recommendations/${recommendationId}/templates`);
   },
 
-  getBenchmarks: async (analysisId: string): Promise<BenchmarkComparison> => {
-    return request<BenchmarkComparison>(`/api/v1/analyses/${analysisId}/benchmarks`);
+  getBenchmarks: async (analysisId: string, ultraLarge = false): Promise<BenchmarkComparison> => {
+    const mode = ultraLarge ? '?mode=ultra-large' : '';
+    return request<BenchmarkComparison>(`/api/v1/analyses/${analysisId}/benchmarks${mode}`);
   },
 
   getScalarCapabilities: async (): Promise<ScalarCapabilities> => {
     return request<ScalarCapabilities>('/api/v1/scalar/capabilities');
   },
 
-  createScalarEnlistment: async (repositoryId: string): Promise<ScalarEnlistmentItem> => {
+  createScalarEnlistment: async (repositoryId: string, checkoutScope: ScalarCheckoutScope = 'root'): Promise<ScalarEnlistmentItem> => {
     return request<ScalarEnlistmentItem>('/api/v1/scalar/enlistments', {
       method: 'POST',
-      body: JSON.stringify({ repository_id: repositoryId }),
+      body: JSON.stringify({ repository_id: repositoryId, checkout_scope: checkoutScope }),
     });
   },
 

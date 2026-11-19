@@ -2,9 +2,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { db } from '../../config/database';
+import { env } from '../../config/env';
 import { AppError } from '../../middleware/errorHandler';
 import { scalarCapabilitiesService } from './scalar.capabilities';
-import { scalarExecutor, ScalarExecutionResult } from './scalar.executor';
+import { directoryBytes, scalarExecutor, ScalarExecutionResult, ScalarJobBudget } from './scalar.executor';
 import { scalarRepository } from './scalar.repository';
 import {
   buildManagedWorkspacePath,
@@ -12,6 +13,7 @@ import {
   validateScalarRepositoryUrl,
 } from './scalar.validation';
 import {
+  ScalarCheckoutScope,
   ScalarEnlistmentDetails,
   ScalarEnlistmentRecord,
   ScalarOperationRecord,
@@ -20,7 +22,10 @@ import {
 
 function outputOf(result: ScalarExecutionResult): string {
   return sanitizeCommandOutput(
-    [result.stdout, result.stderr].filter(Boolean).join('\n').trim()
+    [
+      result.phases.length ? 'Git phases: ' + result.phases.join(' → ') : '',
+      result.stdout, result.stderr,
+    ].filter(Boolean).join('\n').trim()
   );
 }
 
@@ -28,6 +33,7 @@ function resultError(
   label: string,
   result: ScalarExecutionResult
 ): string {
+  if (result.failureReason) return label + ': ' + result.failureReason;
   if (result.timedOut) return `${label} timed out`;
   const output = outputOf(result);
   return output ? `${label} failed: ${output}` : `${label} failed`;
@@ -43,6 +49,7 @@ function boolFromGitConfig(value: string): boolean | null {
 export class ScalarService {
   async createEnlistment(input: {
     repository_id: string;
+    checkout_scope?: ScalarCheckoutScope;
     actor_user_id?: string;
   }): Promise<ScalarEnlistmentDetails> {
     await db.init();
@@ -64,7 +71,11 @@ export class ScalarService {
       );
     }
 
-    validateScalarRepositoryUrl(repository.url_path);
+    try {
+      validateScalarRepositoryUrl(repository.url_path);
+    } catch (error) {
+      throw new AppError((error as Error).message, 400);
+    }
 
     const capabilities = await scalarCapabilitiesService.detect();
     if (!capabilities.supported) {
@@ -75,37 +86,39 @@ export class ScalarService {
       );
     }
 
-    const workspaceNonce = crypto.randomUUID();
-    const workspacePath = buildManagedWorkspacePath(
-      repository.id,
-      workspaceNonce
-    );
+    const checkoutScope = input.checkout_scope ?? 'root';
+    if (checkoutScope === 'full' && !capabilities.clone_options.full_clone) {
+      throw new AppError('This Scalar installation does not support the full working tree option', 422);
+    }
 
-    const enlistment = await scalarRepository.createEnlistment({
-      repository_id: repository.id,
-      user_id: actorUserId,
-      workspace_path: workspacePath,
-      scalar_version: capabilities.scalar.version,
-      git_version: capabilities.git.version,
-    });
+    const args = ['clone', '--no-maintenance'];
+    if (capabilities.clone_options.single_branch) args.push('--single-branch');
+    if (capabilities.clone_options.no_tags) args.push('--no-tags');
+    if (checkoutScope === 'full') args.push('--full-clone');
+    const workspacePath = buildManagedWorkspacePath(repository.id, crypto.randomUUID());
+    args.push(repository.url_path, workspacePath);
 
-    let operation: ScalarOperationRecord;
+    let setup: Awaited<ReturnType<typeof scalarRepository.createEnlistment>>;
     try {
-      operation = await scalarRepository.createOperation(enlistment.id, 'clone');
+      setup = await scalarRepository.createEnlistment({
+        repository_id: repository.id,
+        user_id: actorUserId,
+        workspace_path: workspacePath,
+        checkout_scope: checkoutScope,
+        scalar_version: capabilities.scalar.version,
+        git_version: capabilities.git.version,
+      });
     } catch (error) {
+      if ((error as { code?: string; constraint?: string }).constraint === 'scalar_enlistments_one_active_setup') {
+        throw new AppError('A Scalar workspace setup for this repository and checkout scope is already running', 409);
+      }
       throw this.mapOperationConflict(error);
     }
 
-    void this.runClone(
-      enlistment,
-      operation,
-      repository.url_path,
-      capabilities.clone_options.no_maintenance
-    ).catch((error) => {
-      console.error('Scalar clone operation failed unexpectedly:', error);
+    void this.runSetup(setup.enlistment, setup.operation, args).catch((error) => {
+      console.error('Unable to persist Scalar setup outcome:', error);
     });
-
-    return (await scalarRepository.getDetails(enlistment.id))!;
+    return { ...setup.enlistment, operations: [setup.operation] };
   }
 
   async getEnlistment(
@@ -139,6 +152,9 @@ export class ScalarService {
     actorUserId?: string
   ): Promise<ScalarOperationRecord> {
     const enlistment = await this.requireReadyEnlistment(id, actorUserId);
+    if (enlistment.setup_status === 'failed' && !enlistment.midx_verified) {
+      throw new AppError('Verify the multi-pack-index before retrying maintenance scheduling', 409);
+    }
 
     let operation: ScalarOperationRecord;
     try {
@@ -150,9 +166,9 @@ export class ScalarService {
       throw this.mapOperationConflict(error);
     }
 
-    void this.runMaintenance(enlistment, operation).catch((error) => {
-      console.error('Scalar maintenance operation failed unexpectedly:', error);
-    });
+    void this.runMaintenance(enlistment, operation).catch((error) =>
+      this.recordFailure(enlistment.id, error).catch(console.error)
+    );
 
     return operation;
   }
@@ -173,9 +189,9 @@ export class ScalarService {
       throw this.mapOperationConflict(error);
     }
 
-    void this.runMidx(enlistment, operation).catch((error) => {
-      console.error('Scalar MIDX operation failed unexpectedly:', error);
-    });
+    void this.runMidx(enlistment, operation).catch((error) =>
+      this.recordFailure(enlistment.id, error).catch(console.error)
+    );
 
     return operation;
   }
@@ -191,6 +207,9 @@ export class ScalarService {
     const enlistment = await scalarRepository.getById(id);
     if (!enlistment) throw new AppError('Scalar enlistment not found', 404);
     this.assertOwner(enlistment, actorUserId);
+    if (enlistment.setup_status === 'running') {
+      throw new AppError('The automatic Scalar setup is still running', 409);
+    }
 
     if (!['ready', 'optimized'].includes(enlistment.status)) {
       throw new AppError(
@@ -215,209 +234,163 @@ export class ScalarService {
     }
   }
 
-  private async runClone(
+  private async runSetup(
     enlistment: ScalarEnlistmentRecord,
+    clone: ScalarOperationRecord,
+    args: string[]
+  ): Promise<void> {
+    const budget = {
+      workspacePath: enlistment.workspace_path,
+      deadline: Date.now() + env.SCALAR_COMMAND_TIMEOUT_MS,
+      maxBytes: env.SCALAR_WORKSPACE_MAX_BYTES,
+    };
+
+    try {
+      const workspace = await this.runClone(enlistment, clone, args, budget);
+      await this.runMidx(workspace, await scalarRepository.createOperation(workspace.id, 'midx_write'), budget);
+      await this.runMaintenance(
+        workspace,
+        await scalarRepository.createOperation(workspace.id, 'maintenance_start'),
+        budget
+      );
+      await scalarRepository.updateEnlistment(workspace.id, { setup_status: 'completed' });
+    } catch (error) {
+      await this.recordFailure(enlistment.id, error);
+    }
+  }
+
+  private async recordFailure(enlistmentId: string, error: unknown): Promise<void> {
+    const enlistment = await scalarRepository.getById(enlistmentId);
+    if (!enlistment) return;
+    const message = sanitizeCommandOutput(error instanceof Error ? error.message : String(error));
+    await scalarRepository.updateEnlistment(enlistmentId, {
+      ...(enlistment.setup_status === 'running' ? { setup_status: 'failed' } : {}),
+      status: !enlistment.worktree_path ? 'failed' : enlistment.midx_verified ? 'optimized' : 'ready',
+      error_message: message,
+    });
+    if (enlistment.setup_status === 'running' && !enlistment.worktree_path) {
+      await fs.rm(enlistment.workspace_path, { recursive: true, force: true }).catch((cleanupError) => {
+        console.error('Unable to clean up incomplete Scalar checkout:', cleanupError);
+      });
+    }
+  }
+
+  private async runOperation(
     operation: ScalarOperationRecord,
-    repositoryUrl: string,
-    disableMaintenance: boolean
+    label: string,
+    command: () => Promise<ScalarExecutionResult>,
+    afterSuccess?: () => Promise<void>
   ): Promise<void> {
     await scalarRepository.updateOperation(operation.id, {
       status: 'running',
       started_at: new Date().toISOString(),
     });
-    await scalarRepository.updateEnlistment(enlistment.id, {
-      status: 'cloning',
+    let result: ScalarExecutionResult | undefined;
+    try {
+      result = await command();
+      if (!result.ok) throw new Error(resultError(label, result));
+      await afterSuccess?.();
+    } catch (error) {
+      await scalarRepository.updateOperation(operation.id, {
+        status: 'failed',
+        completed_at: new Date().toISOString(),
+        exit_code: result?.exitCode ?? null,
+        output: result ? outputOf(result) : null,
+        error_message: sanitizeCommandOutput(error instanceof Error ? error.message : String(error)),
+      });
+      throw error;
+    }
+
+    await scalarRepository.updateOperation(operation.id, {
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+      exit_code: result.exitCode,
+      output: outputOf(result),
       error_message: null,
     });
+  }
 
-    try {
-      await fs.mkdir(path.dirname(enlistment.workspace_path), {
-        recursive: true,
-      });
-
-      const args = ['clone'];
-      if (disableMaintenance) args.push('--no-maintenance');
-      args.push(repositoryUrl, enlistment.workspace_path);
-
-      const result = await scalarExecutor.run('scalar', args);
-      if (!result.ok) {
-        throw new Error(resultError('scalar clone', result));
+  private async runClone(
+    enlistment: ScalarEnlistmentRecord,
+    operation: ScalarOperationRecord,
+    args: string[],
+    budget: ScalarJobBudget
+  ): Promise<ScalarEnlistmentRecord> {
+    let workspace = enlistment;
+    await this.runOperation(operation, 'scalar clone', async () => {
+      await scalarRepository.updateEnlistment(enlistment.id, { status: 'cloning', error_message: null });
+      await fs.mkdir(path.dirname(enlistment.workspace_path), { recursive: true, mode: 0o700 });
+      return scalarExecutor.run('scalar', args, { traceId: operation.id, budget });
+    }, async () => {
+      const worktreePath = await this.resolveWorktreePath(enlistment.workspace_path);
+      const [state, head, gitBytes, worktreeBytes] = await Promise.all([
+        this.inspectRepositoryState(worktreePath),
+        scalarExecutor.run('git', ['rev-parse', '--verify', 'HEAD'], { cwd: worktreePath, timeoutMs: 5000 }),
+        directoryBytes(path.join(worktreePath, '.git')),
+        directoryBytes(worktreePath, '.git'),
+      ]);
+      if (!head.ok || !/^[a-f0-9]{40,64}$/.test(head.stdout.trim())) {
+        throw new Error('Scalar checkout did not resolve to a verified HEAD commit');
       }
 
-      const worktreePath = await this.resolveWorktreePath(
-        enlistment.workspace_path
-      );
-      const state = await this.inspectRepositoryState(worktreePath);
-
-      await scalarRepository.updateEnlistment(enlistment.id, {
+      workspace = await scalarRepository.updateEnlistment(enlistment.id, {
         status: 'ready',
         worktree_path: worktreePath,
-        maintenance_enabled: disableMaintenance ? false : true,
-        fsmonitor_enabled: state.fsmonitor_enabled,
-        partial_clone_enabled: state.partial_clone_enabled,
-        sparse_checkout_enabled: state.sparse_checkout_enabled,
-        error_message: null,
+        head_commit: head.stdout.trim(),
+        git_bytes: gitBytes,
+        worktree_bytes: worktreeBytes,
+        maintenance_enabled: false,
+        ...state,
       });
-
-      await scalarRepository.updateOperation(operation.id, {
-        status: 'completed',
-        completed_at: new Date().toISOString(),
-        exit_code: result.exitCode,
-        output: outputOf(result),
-        error_message: null,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await scalarRepository.updateEnlistment(enlistment.id, {
-        status: 'failed',
-        error_message: sanitizeCommandOutput(message),
-      });
-      await scalarRepository.updateOperation(operation.id, {
-        status: 'failed',
-        completed_at: new Date().toISOString(),
-        exit_code: 1,
-        error_message: sanitizeCommandOutput(message),
-      });
-    }
+    });
+    return workspace;
   }
 
   private async runMaintenance(
     enlistment: ScalarEnlistmentRecord,
-    operation: ScalarOperationRecord
+    operation: ScalarOperationRecord,
+    budget?: ScalarJobBudget
   ): Promise<void> {
-    await scalarRepository.updateOperation(operation.id, {
-      status: 'running',
-      started_at: new Date().toISOString(),
-    });
-
-    const result = await scalarExecutor.run(
-      'git',
-      ['maintenance', 'start'],
-      { cwd: enlistment.worktree_path! }
+    await this.runOperation(operation, 'git maintenance start',
+      () => scalarExecutor.run('git', ['maintenance', 'start'], {
+        cwd: enlistment.worktree_path!,
+        traceId: operation.id,
+        budget,
+      }),
+      async () => {
+        await scalarRepository.updateEnlistment(enlistment.id, {
+          maintenance_enabled: true,
+          error_message: null,
+          ...(enlistment.setup_status === 'failed' ? { setup_status: 'completed' } : {}),
+        });
+      }
     );
-
-    if (result.ok) {
-      await scalarRepository.updateEnlistment(enlistment.id, {
-        maintenance_enabled: true,
-        error_message: null,
-      });
-      await scalarRepository.updateOperation(operation.id, {
-        status: 'completed',
-        completed_at: new Date().toISOString(),
-        exit_code: result.exitCode,
-        output: outputOf(result),
-      });
-      return;
-    }
-
-    const message = resultError('git maintenance start', result);
-    await scalarRepository.updateOperation(operation.id, {
-      status: 'failed',
-      completed_at: new Date().toISOString(),
-      exit_code: result.exitCode,
-      output: outputOf(result),
-      error_message: message,
-    });
   }
 
   private async runMidx(
     enlistment: ScalarEnlistmentRecord,
-    writeOperation: ScalarOperationRecord
+    write: ScalarOperationRecord,
+    budget?: ScalarJobBudget
   ): Promise<void> {
-    await scalarRepository.updateEnlistment(enlistment.id, {
-      status: 'optimizing',
-      error_message: null,
-    });
-    await scalarRepository.updateOperation(writeOperation.id, {
-      status: 'running',
-      started_at: new Date().toISOString(),
-    });
-
-    const write = await scalarExecutor.run(
-      'git',
-      ['multi-pack-index', 'write'],
-      { cwd: enlistment.worktree_path! }
-    );
-
-    if (!write.ok) {
-      const message = resultError('git multi-pack-index write', write);
+    const cwd = enlistment.worktree_path!;
+    await this.runOperation(write, 'git multi-pack-index write', async () => {
       await scalarRepository.updateEnlistment(enlistment.id, {
-        status: 'ready',
-        error_message: message,
-      });
-      await scalarRepository.updateOperation(writeOperation.id, {
-        status: 'failed',
-        completed_at: new Date().toISOString(),
-        exit_code: write.exitCode,
-        output: outputOf(write),
-        error_message: message,
-      });
-      return;
-    }
-
-    await scalarRepository.updateEnlistment(enlistment.id, {
-      midx_written: true,
-    });
-    await scalarRepository.updateOperation(writeOperation.id, {
-      status: 'completed',
-      completed_at: new Date().toISOString(),
-      exit_code: write.exitCode,
-      output: outputOf(write),
-    });
-
-    let verifyOperation: ScalarOperationRecord;
-    try {
-      verifyOperation = await scalarRepository.createOperation(
-        enlistment.id,
-        'midx_verify'
-      );
-    } catch (error) {
-      await scalarRepository.updateEnlistment(enlistment.id, {
-        status: 'ready',
-        error_message: 'MIDX was written but verification could not be scheduled',
-      });
-      return;
-    }
-
-    await scalarRepository.updateOperation(verifyOperation.id, {
-      status: 'running',
-      started_at: new Date().toISOString(),
-    });
-
-    const verify = await scalarExecutor.run(
-      'git',
-      ['multi-pack-index', 'verify'],
-      { cwd: enlistment.worktree_path! }
-    );
-
-    if (verify.ok) {
-      await scalarRepository.updateEnlistment(enlistment.id, {
-        status: 'optimized',
-        midx_verified: true,
+        status: 'optimizing',
+        midx_verified: false,
         error_message: null,
       });
-      await scalarRepository.updateOperation(verifyOperation.id, {
-        status: 'completed',
-        completed_at: new Date().toISOString(),
-        exit_code: verify.exitCode,
-        output: outputOf(verify),
-      });
-      return;
-    }
+      return scalarExecutor.run('git', ['multi-pack-index', 'write'], { cwd, traceId: write.id, budget });
+    }, async () => {
+      await scalarRepository.updateEnlistment(enlistment.id, { midx_written: true });
+    });
 
-    const message = resultError('git multi-pack-index verify', verify);
-    await scalarRepository.updateEnlistment(enlistment.id, {
-      status: 'ready',
-      midx_verified: false,
-      error_message: message,
-    });
-    await scalarRepository.updateOperation(verifyOperation.id, {
-      status: 'failed',
-      completed_at: new Date().toISOString(),
-      exit_code: verify.exitCode,
-      output: outputOf(verify),
-      error_message: message,
-    });
+    const verify = await scalarRepository.createOperation(enlistment.id, 'midx_verify');
+    await this.runOperation(verify, 'git multi-pack-index verify',
+      () => scalarExecutor.run('git', ['multi-pack-index', 'verify'], { cwd, traceId: verify.id, budget }),
+      async () => {
+        await scalarRepository.updateEnlistment(enlistment.id, { status: 'optimized', midx_verified: true });
+      }
+    );
   }
 
   private async resolveWorktreePath(workspacePath: string): Promise<string> {
@@ -463,7 +436,7 @@ export class ScalarService {
 
     return {
       fsmonitor_enabled: fsmonitor,
-      partial_clone_enabled: promisor,
+      partial_clone_enabled: promisor ?? false,
       sparse_checkout_enabled: sparseCheckout,
     };
   }

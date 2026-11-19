@@ -18,6 +18,8 @@ export type ScalarOperationType =
   | 'midx_write'
   | 'midx_verify';
 
+export type ScalarCheckoutScope = 'root' | 'full';
+
 export interface ScalarEnlistmentRecord {
   id: string;
   repository_id: string;
@@ -25,6 +27,11 @@ export interface ScalarEnlistmentRecord {
   workspace_path: string;
   worktree_path: string | null;
   clone_mode: string;
+  checkout_scope: ScalarCheckoutScope;
+  setup_status: 'running' | 'completed' | 'failed' | null;
+  head_commit: string | null;
+  git_bytes: number | null;
+  worktree_bytes: number | null;
   status: ScalarEnlistmentStatus;
   scalar_version: string | null;
   git_version: string | null;

@@ -18,6 +18,11 @@ test('rejects non-GitHub and non-HTTPS repository URLs', () => {
   assert.throws(() => validateScalarRepositoryUrl('ssh://git@github.com/example/repo'));
 });
 
+test('rejects GitHub URLs containing credentials or query strings before tracing', () => {
+  assert.throws(() => validateScalarRepositoryUrl('https://user:secret@github.com/example/repo'));
+  assert.throws(() => validateScalarRepositoryUrl('https://github.com/example/repo?token=secret'));
+});
+
 test('builds managed workspaces beneath the configured root', () => {
   const target = buildManagedWorkspacePath(
     '11111111-1111-4111-8111-111111111111',

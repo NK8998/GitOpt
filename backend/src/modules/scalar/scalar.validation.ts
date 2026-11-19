@@ -6,6 +6,9 @@ export function validateScalarRepositoryUrl(value: string): URL {
   if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== 'github.com') {
     throw new Error('Scalar managed cloning currently supports HTTPS GitHub repository URLs only');
   }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error('Use a GitHub repository URL without credentials, query parameters, or fragments');
+  }
   const parts = parsed.pathname.split('/').filter(Boolean);
   if (parts.length < 2) {
     throw new Error('Repository URL must include owner and repository name');
