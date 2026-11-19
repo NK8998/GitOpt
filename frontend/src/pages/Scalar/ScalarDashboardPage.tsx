@@ -234,7 +234,7 @@ export default function ScalarDashboardPage() {
 
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
         <Button variant="secondary" onClick={() => void load()}><RefreshCw size={15} /> Refresh</Button>
-        {analysisId && <Button onClick={() => navigate(`/benchmarks?id=${analysisId}&mode=ultra-large`)}>View strategy comparison <ArrowRight size={15} /></Button>}
+        {analysisId && <Button onClick={() => navigate(`/benchmarks?id=${analysisId}&mode=ultra-large&workspace=${item.id}`)}>View strategy comparison <ArrowRight size={15} /></Button>}
       </div>
 
       <p style={{ color: "var(--text-muted)", marginTop: 18, fontSize: 13 }}>

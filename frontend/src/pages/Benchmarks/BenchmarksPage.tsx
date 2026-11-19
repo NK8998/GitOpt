@@ -1,146 +1,112 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, RefreshCw, Terminal, Zap } from "lucide-react";
-import { useNavigate, useSearchParams } from "react-router";
+import { AlertCircle, Loader2 } from "lucide-react";
+import { useSearchParams } from "react-router";
 import Button from "../../components/common/Button";
-import { api, AnalysisItem, BenchmarkComparison } from "../../api/client";
-import UltraLargeComparisonPanel from "./UltraLargeComparisonPanel";
+import { api } from "../../api/client";
+import type { AnalysisItem, BenchmarkComparison } from "../../api/client";
+import { useRepository } from "../../context/RepositoryContext";
+import LiveScalarWorkspace from "./LiveScalarWorkspace";
+import { CheckoutScopeAnalysis, ReferenceMethodology, RepositoryHeader, RepositoryMetrics } from "./RepositoryReference";
+import StrategyComparison, { StrategyRecommendation } from "./StrategyComparison";
+import "./benchmarks.css";
 
 export default function BenchmarksPage() {
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { setCurrentRepository } = useRepository();
   const requestedAnalysisId = searchParams.get("id") || "";
-  const ultraLarge = searchParams.get("mode") === "ultra-large";
   const [analysis, setAnalysis] = useState<AnalysisItem | null>(null);
   const [benchmarks, setBenchmarks] = useState<BenchmarkComparison | null>(null);
   const [running, setRunning] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [recalculateError, setRecalculateError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
     async function loadData() {
       setLoading(true);
       setError(null);
+      setRecalculateError(null);
       try {
         let currentId = requestedAnalysisId;
         if (!currentId) {
-          const all = await api.getAllAnalyses();
-          currentId = all[0]?.id || "";
+          const analyses = await api.getAllAnalyses();
+          currentId = analyses[0]?.id || "";
         }
         if (!currentId) throw new Error("Run a repository analysis before comparing strategies.");
 
-        const [ana, bench] = await Promise.all([
+        const [currentAnalysis, comparison] = await Promise.all([
           api.getAnalysis(currentId),
-          api.getBenchmarks(currentId, ultraLarge),
+          api.getBenchmarks(currentId, true),
         ]);
-        setAnalysis(ana);
-        setBenchmarks(bench);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load strategy estimates");
+        if (cancelled) return;
+        setAnalysis(currentAnalysis);
+        setBenchmarks(comparison);
+        if (currentAnalysis.repository) setCurrentRepository(currentAnalysis.repository);
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "Unable to load the strategy comparison.");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
-    loadData();
-  }, [requestedAnalysisId, ultraLarge]);
+    void loadData();
+    return () => { cancelled = true; };
+  }, [requestedAnalysisId, retry, setCurrentRepository]);
 
-  const handleRecalculate = async () => {
-    if (!analysis?.id) return;
+  async function recalculate() {
+    if (!analysis) return;
     setRunning(true);
+    setRecalculateError(null);
     try {
       const updated = await api.runBenchmarks(analysis.id);
-      setBenchmarks((previous) => ({ ...updated, ultra_large: previous?.ultra_large }));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to recalculate estimates");
+      setBenchmarks((previous) => previous?.analysis_id === updated.analysis_id
+        ? { ...updated, ultra_large: previous.ultra_large }
+        : previous);
+    } catch (cause) {
+      setRecalculateError(cause instanceof Error ? cause.message : "Unable to recalculate the strategy estimates.");
     } finally {
       setRunning(false);
     }
-  };
-
-  if (loading) return <div className="page"><div className="page-heading"><h1>Loading strategy comparison…</h1></div></div>;
-  if (error || !analysis || !benchmarks) {
-    return <div className="page"><div className="page-heading"><h1>Strategy comparison unavailable</h1><p>{error || "No benchmark estimate was returned."}</p></div></div>;
   }
 
-  const repoName = analysis.repository?.name || "Repository";
-  const workloadName = analysis.repository?.workload?.name || "selected";
-  const currentIdParam = `?id=${analysis.id}`;
-  const strategies = benchmarks.strategies;
-  const chartSeries = benchmarks.chart_series;
+  if (loading) {
+    return (
+      <div className="page benchmarks-page">
+        <div className="panel benchmark-page-state" role="status"><Loader2 className="animate-spin" size={19} aria-hidden="true" /> Loading strategy comparison…</div>
+      </div>
+    );
+  }
+  if (error || !analysis || !benchmarks) {
+    return (
+      <div className="page benchmarks-page">
+        <div className="panel benchmark-page-state benchmark-page-error" role="alert">
+          <AlertCircle size={21} aria-hidden="true" />
+          <div><h1>Strategy comparison unavailable</h1><p>{error ?? "No benchmark estimate was returned."}</p></div>
+          <Button variant="secondary" onClick={() => setRetry((count) => count + 1)}>Retry</Button>
+        </div>
+      </div>
+    );
+  }
 
+  const reference = benchmarks.ultra_large;
   return (
-    <div className="page">
-      <div className="page-heading split-heading">
-        <div>
-          <h1>{ultraLarge ? "Ultra-Large Repository Mode" : "Optimization estimates"}</h1>
-          <p>Estimated performance for <b>{repoName}</b> under a {workloadName.toLowerCase()} workload.</p>
-        </div>
-        <Button variant="secondary" onClick={handleRecalculate} disabled={running}>
-          <RefreshCw size={14} className={running ? "animate-spin" : ""} /> {running ? "Recalculating..." : "Recalculate estimates"}
-        </Button>
-      </div>
-
-      {ultraLarge && <UltraLargeComparisonPanel key={analysis.id} analysis={analysis} reference={benchmarks.ultra_large} />}
-
-      <section className="panel" style={{ padding: 16, marginBottom: 20 }}>
-        <strong>{ultraLarge ? "Modelled comparison for this repository" : "Methodology"}</strong>
-        <p style={{ marginBottom: 0, color: "var(--text-muted)" }}>{benchmarks.methodology}</p>
-      </section>
-
-      <div className="benchmark-summary">
-        <div className="winner-icon"><Zap size={21} /></div>
-        <div>
-          <small>BEST MODELLED STRATEGY FOR THIS WORKLOAD</small>
-          <h2>{benchmarks.best_strategy}</h2>
-          <p>Use this as a hypothesis to validate on a disposable clone, not as a measured benchmark result.</p>
-        </div>
-        <div className="saving">
-          <small>ESTIMATED TIME SAVED</small>
-          <strong>{benchmarks.estimated_time_saved}</strong>
-          <span>{benchmarks.percent_faster}% faster (modelled)</span>
-        </div>
-      </div>
-
-      <section className="panel benchmark-table">
-        <div className="benchmark-row benchmark-head">
-          <span>Strategy</span><span>Clone time</span><span>Data transferred</span><span>Disk usage</span><span>Relative time</span>
-        </div>
-        {strategies.map((row) => (
-          <div className={`benchmark-row ${row.is_best ? "best" : ""}`} key={row.strategy}>
-            <span><b>{row.strategy}</b>{row.is_best && <i>MODEL BEST</i>}</span>
-            <span>{row.time}</span><span>{row.transfer}</span><span>{row.disk}</span>
-            <span><i className="bar"><i style={{ width: `${row.relative_percent}%` }} /></i><small>{row.relative_percent}%</small></span>
-          </div>
-        ))}
-      </section>
-
-      <div className="benchmark-charts">
-        {[
-          ["Estimated clone time", "Minutes", chartSeries.clone_time_min],
-          ["Estimated data transferred", "Gigabytes", chartSeries.data_transferred_gb],
-          ["Estimated disk usage", "Gigabytes", chartSeries.disk_usage_gb],
-        ].map(([title, unit, values]) => (
-          <section className="panel mini-chart-card" key={String(title)}>
-            <div className="panel-heading"><div><span>{String(title)}</span><small>{String(unit)}</small></div></div>
-            <div className="vertical-bars">
-              {(values as number[]).map((value, index) => {
-                const max = Math.max(...(values as number[]), 1);
-                return (
-                  <div key={index}>
-                    <span>{value}</span>
-                    <i style={{ height: `${(value / max) * 100}%` }} className={strategies[index]?.is_best ? "best-bar" : ""} />
-                    <small>{chartSeries.labels[index]}</small>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        ))}
-      </div>
-
-      <div className="apply-card">
-        <div><Terminal size={20} /><span><strong>Ready to review the recommended configuration?</strong><small>Download commands and configuration templates generated from matched recommendations.</small></span></div>
-        <Button onClick={() => navigate(`/configuration${currentIdParam}`)}>View configuration <ArrowRight size={15} /></Button>
-      </div>
+    <div className="page benchmarks-page">
+      <RepositoryHeader analysis={analysis} reference={reference} />
+      {reference && <RepositoryMetrics reference={reference} />}
+      <CheckoutScopeAnalysis reference={reference} />
+      {recalculateError && <p className="panel benchmark-notice benchmark-error-text" role="alert">{recalculateError}</p>}
+      <StrategyComparison
+        key={`strategies-${analysis.id}`}
+        comparison={benchmarks}
+        repository={analysis.repository?.name ?? "Selected repository"}
+        workload={analysis.repository?.workload?.name}
+        running={running}
+        onRecalculate={recalculate}
+      />
+      <StrategyRecommendation key={`recommendation-${analysis.id}`} comparison={benchmarks} analysisId={analysis.id} />
+      <LiveScalarWorkspace key={`workspace-${analysis.id}`} analysis={analysis} />
+      <ReferenceMethodology reference={reference} modelMethodology={benchmarks.methodology} />
     </div>
   );
 }
